@@ -1,5 +1,6 @@
 const http = require("http");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { URL } = require("url");
 
@@ -46,8 +47,21 @@ function readBody(request) {
         resolve({});
         return;
       }
+
+      const contentType = request.headers["content-type"] || "";
       try {
-        resolve(JSON.parse(raw));
+        if (contentType.includes("application/json")) {
+          resolve(JSON.parse(raw));
+          return;
+        }
+
+        const trimmed = raw.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          resolve(JSON.parse(trimmed));
+          return;
+        }
+
+        resolve({ raw: trimmed });
       } catch {
         reject(new Error("Invalid JSON body."));
       }
@@ -428,6 +442,24 @@ const server = http.createServer(async (request, response) => {
 
 setInterval(cleanupLobbies, CLEANUP_INTERVAL_MS);
 
+function getNetworkUrls() {
+  const interfaces = os.networkInterfaces();
+  const urls = new Set([`http://127.0.0.1:${PORT}`]);
+
+  Object.values(interfaces).forEach((entries) => {
+    (entries || []).forEach((entry) => {
+      if (entry.family === "IPv4" && !entry.internal) {
+        urls.add(`http://${entry.address}:${PORT}`);
+      }
+    });
+  });
+
+  return Array.from(urls);
+}
+
 server.listen(PORT, HOST, () => {
-  console.log(`Codex Tetris server running at http://${HOST}:${PORT}`);
+  console.log("Codex Tetris server running at:");
+  getNetworkUrls().forEach((url) => {
+    console.log(`  ${url}`);
+  });
 });

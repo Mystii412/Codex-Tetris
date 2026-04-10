@@ -387,17 +387,19 @@ function setLobbies(nextLobbies) {
 
 async function refreshLobbies() {
   if (isSyncingLobbies) {
-    return;
+    return lobbies;
   }
   isSyncingLobbies = true;
   try {
     const payload = await apiRequest("/api/lobbies");
     setLobbies(payload.lobbies ?? []);
+    return lobbies;
   } catch (error) {
     lobbyElements.detailName.textContent = "Server unavailable";
     lobbyElements.detailText.textContent = error.message;
     lobbyElements.detailStats.innerHTML = "";
     buttons.joinLobby.disabled = true;
+    return lobbies;
   } finally {
     isSyncingLobbies = false;
   }
@@ -669,6 +671,25 @@ function updateHud() {
 
 function getCurrentLobby() {
   return lobbies.find((lobby) => lobby.id === currentLobbyId) ?? null;
+}
+
+function findLobbyForPlayer(playerId, preferredLobbyId = null) {
+  if (preferredLobbyId) {
+    const preferredLobby = lobbies.find((lobby) => lobby.id === preferredLobbyId);
+    if (preferredLobby) {
+      return preferredLobby;
+    }
+  }
+
+  const matchingLobbies = lobbies.filter((lobby) =>
+    lobby.players.some((player) => player.id === playerId),
+  );
+
+  return (
+    matchingLobbies.sort(
+      (left, right) => (right.startedAt || 0) - (left.startedAt || 0),
+    )[0] ?? null
+  );
 }
 
 function updateMatchHud() {
@@ -943,7 +964,14 @@ async function createLobby() {
       }),
     });
     await refreshLobbies();
-    enterMultiplayerRoom(payload.lobby);
+
+    const createdLobby =
+      payload?.lobby ?? findLobbyForPlayer(clientProfile.id);
+    if (!createdLobby) {
+      throw new Error("The lobby was created, but the server did not return its details.");
+    }
+
+    enterMultiplayerRoom(createdLobby);
   } catch (error) {
     lobbyElements.detailName.textContent = "Could not create lobby";
     lobbyElements.detailText.textContent = error.message;
@@ -965,7 +993,14 @@ async function joinSelectedLobby() {
       }),
     });
     await refreshLobbies();
-    enterMultiplayerRoom(payload.lobby);
+
+    const joinedLobby =
+      payload?.lobby ?? findLobbyForPlayer(clientProfile.id, lobby.id);
+    if (!joinedLobby) {
+      throw new Error("Joined the room, but could not load the latest lobby state.");
+    }
+
+    enterMultiplayerRoom(joinedLobby);
   } catch (error) {
     lobbyElements.detailName.textContent = "Could not join lobby";
     lobbyElements.detailText.textContent = error.message;
