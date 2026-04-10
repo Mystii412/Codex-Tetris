@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codex Tetris</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Arcade Prototype</p>
+        <h1>Codex Tetris</h1>
+      </div>
+      <button class="ghost-button" id="globalMenuButton" type="button">Main Menu</button>
+    </header>
+
+    <main class="screen-stack">
+      <section class="screen screen-active" id="menuScreen" aria-labelledby="menuTitle">
+        <div class="hero-card">
+          <div class="hero-copy">
+            <p class="eyebrow">Welcome Back</p>
+            <h2 id="menuTitle">Pick your mode</h2>
+            <p class="hero-text">
+              Slide into a classic solo run or browse a multiplayer lobby list with room details,
+              player counts, and quick-join actions.
+            </p>
+          </div>
+          <div class="menu-actions">
+            <button class="primary-button" id="singleplayerButton" type="button">Singleplayer</button>
+            <button class="secondary-button" id="multiplayerButton" type="button">Multiplayer</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="lobbyScreen" aria-labelledby="lobbyTitle">
+        <div class="panel panel-wide">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Multiplayer</p>
+              <h2 id="lobbyTitle">Lobby Finder</h2>
+            </div>
+            <div class="panel-actions">
+              <button class="ghost-button" id="refreshLobbiesButton" type="button">Refresh</button>
+              <button class="primary-button" id="createLobbyButton" type="button">Create Lobby</button>
+            </div>
+          </div>
+
+          <div class="lobby-grid">
+            <div class="lobby-list" id="lobbyList" role="list"></div>
+            <aside class="panel lobby-detail">
+              <p class="eyebrow">Selection</p>
+              <h3 id="lobbyDetailName">Choose a lobby</h3>
+              <p id="lobbyDetailText">
+                Select a room to inspect the player count, ruleset, and connection region.
+              </p>
+              <div class="detail-stats" id="lobbyDetailStats"></div>
+              <button class="primary-button" id="joinLobbyButton" type="button" disabled>Join Selected Lobby</button>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="gameScreen" aria-labelledby="gameTitle">
+        <div class="game-layout">
+          <section class="panel board-panel">
+            <div class="panel-header compact">
+              <div>
+                <p class="eyebrow" id="gameModeLabel">Singleplayer</p>
+                <h2 id="gameTitle">Tetris Run</h2>
+              </div>
+              <div class="panel-actions">
+                <button class="ghost-button" id="pauseButton" type="button">Pause</button>
+              </div>
+            </div>
+            <div class="board-wrap">
+              <canvas id="tetrisCanvas" width="300" height="600" aria-label="Tetris board"></canvas>
+              <div class="overlay hidden" id="gameOverlay">
+                <div class="overlay-card">
+                  <p class="eyebrow" id="overlayEyebrow">Run Ended</p>
+                  <h3 id="overlayTitle">Game Over</h3>
+                  <p id="overlayText">Try another run or head back to the menu.</p>
+                  <div class="overlay-actions">
+                    <button class="primary-button" id="overlayPrimaryButton" type="button">Play Again</button>
+                    <button class="ghost-button" id="overlaySecondaryButton" type="button">Main Menu</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <aside class="game-sidebar">
+            <section class="panel stat-panel">
+              <p class="eyebrow">Stats</p>
+              <div class="stat-row"><span>Score</span><strong id="scoreValue">0</strong></div>
+              <div class="stat-row"><span>Lines</span><strong id="linesValue">0</strong></div>
+              <div class="stat-row"><span>Level</span><strong id="levelValue">1</strong></div>
+            </section>
+
+            <section class="panel next-panel">
+              <p class="eyebrow">Next Piece</p>
+              <canvas id="nextCanvas" width="160" height="160" aria-label="Next Tetris piece"></canvas>
+            </section>
+
+            <section class="panel controls-panel">
+              <p class="eyebrow">Controls</p>
+              <p>Move: <strong>Left / Right</strong></p>
+              <p>Rotate: <strong>Up / X</strong></p>
+              <p>Soft Drop: <strong>Down</strong></p>
+              <p>Hard Drop: <strong>Space</strong></p>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
