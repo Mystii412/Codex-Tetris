@@ -101,7 +101,8 @@ h3 {
 .hero-text,
 #lobbyDetailText,
 .controls-panel p,
-.overlay-card p {
+.overlay-card p,
+.match-card p {
   color: var(--muted);
   line-height: 1.6;
 }
@@ -297,6 +298,10 @@ h3 {
   aspect-ratio: 1 / 1;
 }
 
+#opponentCanvas {
+  aspect-ratio: 1 / 2;
+}
+
 .game-sidebar {
   display: grid;
   gap: 20px;
@@ -315,6 +320,21 @@ h3 {
 
 .stat-row:last-child {
   border-bottom: 0;
+}
+
+.match-card {
+  display: grid;
+  gap: 8px;
+}
+
+.match-card strong {
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.match-card p {
+  margin: 0;
 }
 
 .overlay {
