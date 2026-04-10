@@ -42,6 +42,10 @@ const overlay = {
   text: document.getElementById("overlayText"),
 };
 
+const panels = {
+  opponent: document.getElementById("opponentPanel"),
+};
+
 const canvas = document.getElementById("tetrisCanvas");
 const context = canvas.getContext("2d");
 const nextCanvas = document.getElementById("nextCanvas");
@@ -54,14 +58,12 @@ const ROWS = 20;
 const BLOCK = canvas.width / COLS;
 const NEXT_BLOCK = nextCanvas.width / 6;
 const OPPONENT_BLOCK = opponentCanvas.width / COLS;
+const HEARTBEAT_MS = 5000;
+const SNAPSHOT_INTERVAL_MS = 150;
 const STORAGE_KEYS = {
-  lobbies: "codex-tetris-lobbies",
-  profile: "codex-tetris-profile",
+  profileBase: "codex-tetris-profile-base",
   sessionProfile: "codex-tetris-session-profile",
 };
-const HEARTBEAT_MS = 5000;
-const LOBBY_STALE_MS = 20000;
-const SNAPSHOT_INTERVAL_MS = 150;
 const COLORS = {
   I: "#39cfff",
   J: "#4d72ff",
@@ -112,29 +114,17 @@ const SHAPES = {
 };
 
 const SCORE_BY_LINES = [0, 100, 300, 500, 800];
-const REGIONS = ["USE", "USW", "EU", "APAC"];
-const RULESETS = ["Classic Duel", "Sprint Duel", "Marathon Duel"];
-const LOBBY_NAMES = [
-  "Neon Stackers",
-  "Drop Dynasty",
-  "Hard Drop Heroes",
-  "Tetromino Titans",
-  "Grid Runners",
-  "Last Brick Standing",
-];
-
-const multiplayerChannel =
-  typeof BroadcastChannel === "function"
-    ? new BroadcastChannel("codex-tetris-multiplayer")
-    : null;
 
 let gameState = null;
-let selectedLobbyId = null;
 let lobbies = [];
+let selectedLobbyId = null;
+let currentLobbyId = null;
 let animationFrameId = null;
 let heartbeatId = null;
-let currentLobbyId = null;
-let suppressLobbyLeave = false;
+let events = null;
+let isLeavingLobby = false;
+let isSyncingLobbies = false;
+
 const clientProfile = getOrCreateProfile();
 
 function showScreen(screenName) {
@@ -192,94 +182,34 @@ function createPieceQueue(randomFn = Math.random) {
   };
 }
 
-function readStoredLobbies() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEYS.lobbies) ?? "[]");
-  } catch {
-    return [];
-  }
-}
-
-function writeStoredLobbies(nextLobbies) {
-  localStorage.setItem(STORAGE_KEYS.lobbies, JSON.stringify(nextLobbies));
-}
-
-function normalizeLobby(lobby, now = Date.now()) {
-  const players = (lobby.players ?? [])
-    .filter(
-      (player) =>
-        now - (player.lastSeen ?? player.joinedAt ?? 0) < LOBBY_STALE_MS,
-    )
-    .sort((left, right) => (left.joinedAt ?? 0) - (right.joinedAt ?? 0));
-
-  if (!players.length) {
-    return null;
-  }
-
-  return {
-    ...lobby,
-    players,
-    hostId: players.some((player) => player.id === lobby.hostId)
-      ? lobby.hostId
-      : players[0].id,
-    status:
-      lobby.status === "in-game" && players.length > 1
-        ? "in-game"
-        : lobby.status === "finished"
-          ? "finished"
-          : "waiting",
-    maxPlayers: lobby.maxPlayers ?? 2,
-  };
-}
-
-function loadLobbies() {
-  const normalized = readStoredLobbies()
-    .map((lobby) => normalizeLobby(lobby))
-    .filter(Boolean);
-  writeStoredLobbies(normalized);
-  return normalized;
-}
-
-function updateLobbies(mutator) {
-  const nextLobbies = mutator(loadLobbies()) ?? [];
-  writeStoredLobbies(nextLobbies);
-  lobbies = nextLobbies;
-  broadcastMessage({ type: "lobby-sync" });
-  refreshLobbies();
-  return nextLobbies;
-}
-
-function broadcastMessage(message) {
-  if (multiplayerChannel) {
-    multiplayerChannel.postMessage(message);
-  }
-}
-
 function getOrCreateProfile() {
   try {
-    const sessionProfile = JSON.parse(
+    const existingSession = JSON.parse(
       sessionStorage.getItem(STORAGE_KEYS.sessionProfile) ?? "null",
     );
-    if (sessionProfile?.id && sessionProfile?.name) {
-      return sessionProfile;
+    if (existingSession?.id && existingSession?.name) {
+      return existingSession;
     }
   } catch {}
 
   let baseName = `Player ${Math.floor(1000 + Math.random() * 9000)}`;
   try {
-    const stored = JSON.parse(
-      localStorage.getItem(STORAGE_KEYS.profile) ?? "null",
+    const storedBase = JSON.parse(
+      localStorage.getItem(STORAGE_KEYS.profileBase) ?? "null",
     );
-    if (stored?.baseName) {
-      baseName = stored.baseName;
-    } else if (stored?.name) {
-      baseName = stored.name;
-      localStorage.setItem(STORAGE_KEYS.profile, JSON.stringify({ baseName }));
+    if (storedBase?.baseName) {
+      baseName = storedBase.baseName;
     } else {
-      localStorage.setItem(STORAGE_KEYS.profile, JSON.stringify({ baseName }));
+      localStorage.setItem(
+        STORAGE_KEYS.profileBase,
+        JSON.stringify({ baseName }),
+      );
     }
   } catch {
-    localStorage.setItem(STORAGE_KEYS.profile, JSON.stringify({ baseName }));
+    localStorage.setItem(
+      STORAGE_KEYS.profileBase,
+      JSON.stringify({ baseName }),
+    );
   }
 
   const profile = {
@@ -293,101 +223,25 @@ function getOrCreateProfile() {
   return profile;
 }
 
-function randomFrom(values) {
-  return values[Math.floor(Math.random() * values.length)];
-}
-
-function refreshLobbies() {
-  lobbies = loadLobbies();
-  if (
-    selectedLobbyId &&
-    !lobbies.some((lobby) => lobby.id === selectedLobbyId)
-  ) {
-    selectedLobbyId = null;
-  }
-  if (!selectedLobbyId) {
-    selectedLobbyId = lobbies[0]?.id ?? null;
-  }
-  renderLobbies();
-  if (selectedLobbyId) {
-    selectLobby(selectedLobbyId);
-  } else {
-    buttons.joinLobby.disabled = true;
-    lobbyElements.detailName.textContent = "Choose a lobby";
-    lobbyElements.detailText.textContent =
-      "Create a room in one tab, then join it from another tab or browser window to play a live duel.";
-    lobbyElements.detailStats.innerHTML = "";
-  }
-}
-
-function renderLobbies() {
-  lobbyElements.list.innerHTML = "";
-
-  if (!lobbies.length) {
-    const empty = document.createElement("div");
-    empty.className = "panel";
-    empty.innerHTML = `
-      <p class="eyebrow">No Active Rooms</p>
-      <h3>Start a duel lobby</h3>
-      <p id="emptyLobbyText">Create a lobby here, then open this page in another tab to join and play.</p>
-    `;
-    lobbyElements.list.appendChild(empty);
-    return;
-  }
-
-  lobbies.forEach((lobby) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `lobby-card${lobby.id === selectedLobbyId ? " selected" : ""}`;
-    const playerNames = lobby.players.map((player) => player.name).join(" vs ");
-    button.innerHTML = `
-      <div class="lobby-card-top">
-        <h3>${lobby.name}</h3>
-        <span class="pill">${lobby.region}</span>
-      </div>
-      <div class="lobby-meta">
-        <span>${lobby.ruleset}</span>
-        <span>${lobby.players.length}/${lobby.maxPlayers} Players</span>
-        <span>${lobby.status === "in-game" ? "Match Live" : "Waiting"}</span>
-      </div>
-      <div class="lobby-meta">
-        <span>${playerNames}</span>
-      </div>
-    `;
-    button.addEventListener("click", () => selectLobby(lobby.id));
-    lobbyElements.list.appendChild(button);
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers ?? {}),
+    },
+    ...options,
   });
-}
 
-function selectLobby(lobbyId) {
-  selectedLobbyId = lobbyId;
-  const lobby = lobbies.find((entry) => entry.id === lobbyId);
-  renderLobbies();
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {}
 
-  if (!lobby) {
-    buttons.joinLobby.disabled = true;
-    return;
+  if (!response.ok) {
+    throw new Error(payload.error || "Request failed.");
   }
 
-  const currentPlayer = lobby.players.find(
-    (player) => player.id === clientProfile.id,
-  );
-  const isFull = lobby.players.length >= lobby.maxPlayers && !currentPlayer;
-  const readyToStart = lobby.players.length >= 2;
-
-  lobbyElements.detailName.textContent = lobby.name;
-  lobbyElements.detailText.textContent = currentPlayer
-    ? "You are already in this lobby. Rejoin the match room or wait for the host to start."
-    : "Join from another tab or window to turn this into a real head-to-head browser match.";
-  lobbyElements.detailStats.innerHTML = `
-    <span>Ruleset: ${lobby.ruleset}</span>
-    <span>Players: ${lobby.players.map((player) => player.name).join(" / ")}</span>
-    <span>Status: ${lobby.status === "in-game" ? "Match Live" : readyToStart ? "Ready to Start" : "Waiting for Opponent"}</span>
-  `;
-  buttons.joinLobby.disabled = isFull;
-  buttons.joinLobby.textContent = currentPlayer
-    ? "Rejoin Lobby"
-    : "Join Selected Lobby";
+  return payload;
 }
 
 function drawCell(target, x, y, color, size) {
@@ -428,7 +282,6 @@ function drawGhostPiece() {
       if (!value) {
         return;
       }
-
       const cellX = (gameState.active.x + x) * BLOCK;
       const cellY = (ghostY + y) * BLOCK;
       context.fillStyle = COLORS[gameState.active.type];
@@ -483,11 +336,7 @@ function drawOpponentBoard() {
     opponentContext.fillStyle = "rgba(255,255,255,0.5)";
     opponentContext.font = "14px Trebuchet MS";
     opponentContext.textAlign = "center";
-    opponentContext.fillText(
-      "Waiting...",
-      opponentCanvas.width / 2,
-      opponentCanvas.height / 2,
-    );
+    opponentContext.fillText("Waiting...", opponentCanvas.width / 2, opponentCanvas.height / 2);
     return;
   }
 
@@ -508,6 +357,114 @@ function drawOpponentBoard() {
   });
 
   drawPiece(opponentContext, snapshot.active, OPPONENT_BLOCK, 0.92);
+}
+
+function updateGamePanels() {
+  const showOpponent = Boolean(gameState?.multiplayer?.enabled);
+  panels.opponent.classList.toggle("hidden-panel", !showOpponent);
+}
+
+function setLobbies(nextLobbies) {
+  lobbies = nextLobbies;
+  if (selectedLobbyId && !lobbies.some((lobby) => lobby.id === selectedLobbyId)) {
+    selectedLobbyId = null;
+  }
+  if (!selectedLobbyId) {
+    selectedLobbyId = lobbies[0]?.id ?? null;
+  }
+  renderLobbies();
+  if (selectedLobbyId) {
+    selectLobby(selectedLobbyId);
+  } else {
+    buttons.joinLobby.disabled = true;
+    buttons.joinLobby.textContent = "Join Selected Lobby";
+    lobbyElements.detailName.textContent = "Choose a lobby";
+    lobbyElements.detailText.textContent =
+      "Create a room on one device, then join it from a second device on the same server.";
+    lobbyElements.detailStats.innerHTML = "";
+  }
+}
+
+async function refreshLobbies() {
+  if (isSyncingLobbies) {
+    return;
+  }
+  isSyncingLobbies = true;
+  try {
+    const payload = await apiRequest("/api/lobbies");
+    setLobbies(payload.lobbies ?? []);
+  } catch (error) {
+    lobbyElements.detailName.textContent = "Server unavailable";
+    lobbyElements.detailText.textContent = error.message;
+    lobbyElements.detailStats.innerHTML = "";
+    buttons.joinLobby.disabled = true;
+  } finally {
+    isSyncingLobbies = false;
+  }
+}
+
+function renderLobbies() {
+  lobbyElements.list.innerHTML = "";
+
+  if (!lobbies.length) {
+    const empty = document.createElement("div");
+    empty.className = "panel";
+    empty.innerHTML = `
+      <p class="eyebrow">No Active Rooms</p>
+      <h3>Start a duel lobby</h3>
+      <p>Create a lobby here, then join it from another device using the same server URL.</p>
+    `;
+    lobbyElements.list.appendChild(empty);
+    return;
+  }
+
+  lobbies.forEach((lobby) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `lobby-card${lobby.id === selectedLobbyId ? " selected" : ""}`;
+    button.innerHTML = `
+      <div class="lobby-card-top">
+        <h3>${lobby.name}</h3>
+        <span class="pill">${lobby.region}</span>
+      </div>
+      <div class="lobby-meta">
+        <span>${lobby.ruleset}</span>
+        <span>${lobby.players.length}/${lobby.maxPlayers} Players</span>
+        <span>${lobby.status === "in-game" ? "Match Live" : lobby.status === "finished" ? "Finished" : "Waiting"}</span>
+      </div>
+      <div class="lobby-meta">
+        <span>${lobby.players.map((player) => player.name).join(" vs ")}</span>
+      </div>
+    `;
+    button.addEventListener("click", () => selectLobby(lobby.id));
+    lobbyElements.list.appendChild(button);
+  });
+}
+
+function selectLobby(lobbyId) {
+  selectedLobbyId = lobbyId;
+  const lobby = lobbies.find((entry) => entry.id === lobbyId);
+  renderLobbies();
+
+  if (!lobby) {
+    buttons.joinLobby.disabled = true;
+    return;
+  }
+
+  const currentPlayer = lobby.players.find((player) => player.id === clientProfile.id);
+  const isFull = lobby.players.length >= lobby.maxPlayers && !currentPlayer;
+
+  lobbyElements.detailName.textContent = lobby.name;
+  lobbyElements.detailText.textContent = currentPlayer
+    ? "You are already in this lobby. Rejoin the room or wait for the match to start."
+    : "Join this room from another device to play a live networked duel.";
+  lobbyElements.detailStats.innerHTML = `
+    <span>Ruleset: ${lobby.ruleset}</span>
+    <span>Players: ${lobby.players.map((player) => player.name).join(" / ")}</span>
+    <span>Status: ${lobby.status === "in-game" ? "Match Live" : lobby.status === "finished" ? "Finished" : "Waiting for Opponent"}</span>
+  `;
+  buttons.joinLobby.disabled = isFull;
+  buttons.joinLobby.textContent = currentPlayer ? "Rejoin Lobby" : "Join Selected Lobby";
 }
 
 function collides(piece, board, moveX = 0, moveY = 0, matrix = piece.matrix) {
@@ -563,18 +520,22 @@ function getAttackLines(cleared) {
   return 0;
 }
 
-function sendGarbage(lines) {
+async function sendGarbage(lines) {
   const multiplayer = gameState?.multiplayer;
   if (!multiplayer?.enabled || !lines || !multiplayer.opponentId) {
     return;
   }
-  broadcastMessage({
-    type: "garbage",
-    lobbyId: multiplayer.lobbyId,
-    fromPlayerId: multiplayer.playerId,
-    toPlayerId: multiplayer.opponentId,
-    lines,
-  });
+
+  try {
+    await apiRequest(`/api/lobbies/${multiplayer.lobbyId}/garbage`, {
+      method: "POST",
+      body: JSON.stringify({
+        fromPlayerId: multiplayer.playerId,
+        toPlayerId: multiplayer.opponentId,
+        lines,
+      }),
+    });
+  } catch {}
 }
 
 function clearLines() {
@@ -606,11 +567,7 @@ function applyPendingGarbage() {
     return;
   }
 
-  for (
-    let index = 0;
-    index < gameState.multiplayer.pendingGarbage;
-    index += 1
-  ) {
+  for (let index = 0; index < gameState.multiplayer.pendingGarbage; index += 1) {
     const hole = Math.floor(gameState.random() * COLS);
     gameState.board.shift();
     gameState.board.push(
@@ -624,28 +581,12 @@ function applyPendingGarbage() {
   updateMatchHud();
 }
 
-function spawnPiece() {
-  applyPendingGarbage();
-  const nextType = gameState.nextType;
-  gameState.nextType = gameState.nextRandomType();
-  gameState.active = clonePiece(nextType);
-  gameState.active.x = Math.floor(
-    (COLS - gameState.active.matrix[0].length) / 2,
-  );
-  gameState.active.y = 0;
-  drawNextPiece();
-
-  if (collides(gameState.active, gameState.board)) {
-    handlePlayerLoss();
-  }
-}
-
 function createMultiplayerMeta(config) {
   if (!config) {
     return {
       enabled: false,
-      lastSnapshotAt: 0,
       opponentSnapshot: null,
+      lastSnapshotAt: 0,
     };
   }
 
@@ -653,16 +594,13 @@ function createMultiplayerMeta(config) {
     enabled: true,
     lobbyId: config.lobbyId,
     playerId: clientProfile.id,
-    playerName: clientProfile.name,
     opponentId: null,
-    opponentSnapshot: null,
-    pendingGarbage: 0,
-    seed: config.seed,
     isHost: config.hostId === clientProfile.id,
     waitingForStart: !config.started,
+    pendingGarbage: 0,
+    opponentSnapshot: null,
     matchEnded: false,
     result: null,
-    started: Boolean(config.started),
     lastSnapshotAt: 0,
   };
 }
@@ -696,6 +634,7 @@ function resetGame(modeLabel, multiplayerConfig = null) {
 
   hud.mode.textContent = modeLabel;
   buttons.pause.textContent = gameState.paused ? "Resume" : "Pause";
+  updateGamePanels();
   hideOverlay();
   updateHud();
   updateMatchHud();
@@ -706,34 +645,51 @@ function resetGame(modeLabel, multiplayerConfig = null) {
   gameLoop(0);
 }
 
+function spawnPiece() {
+  applyPendingGarbage();
+  const nextType = gameState.nextType;
+  gameState.nextType = gameState.nextRandomType();
+  gameState.active = clonePiece(nextType);
+  gameState.active.x = Math.floor(
+    (COLS - gameState.active.matrix[0].length) / 2,
+  );
+  gameState.active.y = 0;
+  drawNextPiece();
+
+  if (collides(gameState.active, gameState.board)) {
+    handlePlayerLoss();
+  }
+}
+
 function updateHud() {
   hud.score.textContent = String(gameState.score);
   hud.lines.textContent = String(gameState.lines);
   hud.level.textContent = String(gameState.level);
 }
 
-function currentLobbyPlayers() {
-  return lobbies.find((lobby) => lobby.id === currentLobbyId)?.players ?? [];
+function getCurrentLobby() {
+  return lobbies.find((lobby) => lobby.id === currentLobbyId) ?? null;
 }
 
 function updateMatchHud() {
   if (!gameState?.multiplayer?.enabled) {
+    updateGamePanels();
     matchHud.label.textContent = "Solo Run";
     matchHud.text.textContent = "Singleplayer mode is active.";
     drawOpponentBoard();
     return;
   }
 
+  updateGamePanels();
   const multiplayer = gameState.multiplayer;
+  const currentLobby = getCurrentLobby();
   const opponentName =
     multiplayer.opponentSnapshot?.name ??
-    currentLobbyPlayers().find((player) => player.id !== clientProfile.id)
-      ?.name ??
+    currentLobby?.players.find((player) => player.id !== clientProfile.id)?.name ??
     "Opponent";
 
   if (multiplayer.matchEnded) {
-    matchHud.label.textContent =
-      multiplayer.result === "win" ? "Victory" : "Defeat";
+    matchHud.label.textContent = multiplayer.result === "win" ? "Victory" : "Defeat";
     matchHud.text.textContent =
       multiplayer.result === "win"
         ? `You outlasted ${opponentName}.`
@@ -741,13 +697,13 @@ function updateMatchHud() {
   } else if (multiplayer.waitingForStart) {
     matchHud.label.textContent = "Lobby Room";
     matchHud.text.textContent = multiplayer.isHost
-      ? "Wait for another player, then press Start Match."
-      : "Connected to the room. Waiting for the host to launch the duel.";
+      ? "Wait for another device to join, then press Start Match."
+      : "Connected to the room. Waiting for the host to start.";
   } else {
     matchHud.label.textContent = `${clientProfile.name} vs ${opponentName}`;
     matchHud.text.textContent = multiplayer.pendingGarbage
       ? `${multiplayer.pendingGarbage} garbage line(s) queued against you.`
-      : "Live match synced across tabs. Clear doubles, triples, and tetrises to attack.";
+      : "Live network match is active. Clear doubles, triples, and tetrises to attack.";
   }
 
   drawOpponentBoard();
@@ -767,27 +723,30 @@ function showOverlay({ eyebrow, title, text, primaryLabel, action }) {
   overlay.root.classList.remove("hidden");
 }
 
-function handlePlayerLoss() {
+async function handlePlayerLoss() {
   if (gameState?.multiplayer?.enabled) {
     const multiplayer = gameState.multiplayer;
     multiplayer.matchEnded = true;
     multiplayer.result = "loss";
     multiplayer.waitingForStart = false;
     gameState.paused = true;
-    broadcastMessage({
-      type: "player-lost",
-      lobbyId: multiplayer.lobbyId,
-      playerId: multiplayer.playerId,
-    });
     showOverlay({
       eyebrow: "Match Finished",
       title: "Defeat",
-      text: "Your stack topped out. The other board keeps running until the result locks in.",
+      text: "Your stack topped out. The result has been sent to the server.",
       primaryLabel: "Rematch",
       action: "rematch",
     });
-    finalizeLobbyStatus("finished");
     updateMatchHud();
+
+    try {
+      await apiRequest(`/api/lobbies/${multiplayer.lobbyId}/lost`, {
+        method: "POST",
+        body: JSON.stringify({
+          playerId: multiplayer.playerId,
+        }),
+      });
+    } catch {}
     return;
   }
 
@@ -799,24 +758,6 @@ function handlePlayerLoss() {
     primaryLabel: "Play Again",
     action: "restart",
   });
-}
-
-function finalizeLobbyStatus(status, extra = {}) {
-  if (!currentLobbyId) {
-    return;
-  }
-
-  updateLobbies((existing) =>
-    existing.map((lobby) =>
-      lobby.id === currentLobbyId
-        ? {
-            ...lobby,
-            status,
-            ...extra,
-          }
-        : lobby,
-    ),
-  );
 }
 
 function gameLoop(time = 0) {
@@ -836,13 +777,13 @@ function gameLoop(time = 0) {
     drawBoard();
   }
 
-  maybeBroadcastSnapshot(time);
+  maybeSendSnapshot(time);
   animationFrameId = requestAnimationFrame(gameLoop);
 }
 
-function maybeBroadcastSnapshot(time) {
+async function maybeSendSnapshot(time) {
   const multiplayer = gameState?.multiplayer;
-  if (!multiplayer?.enabled || multiplayer.waitingForStart) {
+  if (!multiplayer?.enabled || multiplayer.waitingForStart || multiplayer.matchEnded) {
     return;
   }
 
@@ -851,33 +792,37 @@ function maybeBroadcastSnapshot(time) {
   }
 
   multiplayer.lastSnapshotAt = time;
-  broadcastMessage({
-    type: "state-update",
-    lobbyId: multiplayer.lobbyId,
-    playerId: multiplayer.playerId,
-    snapshot: {
-      name: clientProfile.name,
-      board: gameState.board.map((row) => [...row]),
-      active: gameState.active
-        ? {
-            type: gameState.active.type,
-            matrix: gameState.active.matrix.map((row) => [...row]),
-            x: gameState.active.x,
-            y: gameState.active.y,
-          }
-        : null,
-      score: gameState.score,
-      lines: gameState.lines,
-      level: gameState.level,
-      result: multiplayer.result,
-    },
-  });
+
+  try {
+    await apiRequest(`/api/lobbies/${multiplayer.lobbyId}/state`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: multiplayer.playerId,
+        snapshot: {
+          name: clientProfile.name,
+          board: gameState.board.map((row) => [...row]),
+          active: gameState.active
+            ? {
+                type: gameState.active.type,
+                matrix: gameState.active.matrix.map((row) => [...row]),
+                x: gameState.active.x,
+                y: gameState.active.y,
+              }
+            : null,
+          score: gameState.score,
+          lines: gameState.lines,
+          level: gameState.level,
+        },
+      }),
+    });
+  } catch {}
 }
 
 function stepDown() {
   if (!gameState || gameState.paused) {
     return;
   }
+
   if (!collides(gameState.active, gameState.board, 0, 1)) {
     gameState.active.y += 1;
     return;
@@ -941,8 +886,10 @@ function setPaused(paused) {
   if (!gameState || gameState.multiplayer?.enabled) {
     return;
   }
+
   gameState.paused = paused;
   buttons.pause.textContent = paused ? "Resume" : "Pause";
+
   if (paused) {
     showOverlay({
       eyebrow: "Paused",
@@ -956,37 +903,27 @@ function setPaused(paused) {
   }
 }
 
-function leaveCurrentLobby() {
-  if (!currentLobbyId || suppressLobbyLeave) {
+async function leaveCurrentLobby() {
+  if (!currentLobbyId || isLeavingLobby) {
     return;
   }
 
+  isLeavingLobby = true;
   const lobbyId = currentLobbyId;
   currentLobbyId = null;
-  updateLobbies((existing) =>
-    existing
-      .map((lobby) => {
-        if (lobby.id !== lobbyId) {
-          return lobby;
-        }
-        const players = lobby.players.filter(
-          (player) => player.id !== clientProfile.id,
-        );
-        if (!players.length) {
-          return null;
-        }
-        return {
-          ...lobby,
-          players,
-          hostId: players[0].id,
-          status:
-            players.length > 1 && lobby.status === "in-game"
-              ? "in-game"
-              : "waiting",
-        };
-      })
-      .filter(Boolean),
-  );
+
+  try {
+    await apiRequest(`/api/lobbies/${lobbyId}/leave`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: clientProfile.id,
+      }),
+    });
+  } catch {
+  } finally {
+    isLeavingLobby = false;
+    refreshLobbies();
+  }
 }
 
 function startSingleplayer() {
@@ -995,38 +932,44 @@ function startSingleplayer() {
   resetGame("Singleplayer");
 }
 
-function syncLobbyMembership(lobbyId) {
-  updateLobbies((existing) =>
-    existing.map((lobby) => {
-      if (lobby.id !== lobbyId) {
-        return lobby;
-      }
+async function createLobby() {
+  try {
+    await leaveCurrentLobby();
+    const payload = await apiRequest("/api/lobbies", {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: clientProfile.id,
+        playerName: clientProfile.name,
+      }),
+    });
+    await refreshLobbies();
+    enterMultiplayerRoom(payload.lobby);
+  } catch (error) {
+    lobbyElements.detailName.textContent = "Could not create lobby";
+    lobbyElements.detailText.textContent = error.message;
+  }
+}
 
-      const existingPlayer = lobby.players.find(
-        (player) => player.id === clientProfile.id,
-      );
-      const players = existingPlayer
-        ? lobby.players.map((player) =>
-            player.id === clientProfile.id
-              ? { ...player, name: clientProfile.name, lastSeen: Date.now() }
-              : player,
-          )
-        : [
-            ...lobby.players,
-            {
-              id: clientProfile.id,
-              name: clientProfile.name,
-              joinedAt: Date.now(),
-              lastSeen: Date.now(),
-            },
-          ];
+async function joinSelectedLobby() {
+  const lobby = lobbies.find((entry) => entry.id === selectedLobbyId);
+  if (!lobby) {
+    return;
+  }
 
-      return {
-        ...lobby,
-        players: players.slice(0, lobby.maxPlayers),
-      };
-    }),
-  );
+  try {
+    const payload = await apiRequest(`/api/lobbies/${lobby.id}/join`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: clientProfile.id,
+        playerName: clientProfile.name,
+      }),
+    });
+    await refreshLobbies();
+    enterMultiplayerRoom(payload.lobby);
+  } catch (error) {
+    lobbyElements.detailName.textContent = "Could not join lobby";
+    lobbyElements.detailText.textContent = error.message;
+  }
 }
 
 function enterMultiplayerRoom(lobby) {
@@ -1034,25 +977,21 @@ function enterMultiplayerRoom(lobby) {
   showScreen("game");
   resetGame(`Lobby: ${lobby.name}`, {
     lobbyId: lobby.id,
-    seed: lobby.seed ?? Math.floor(Math.random() * 2147483647),
+    seed: lobby.seed,
     started: lobby.status === "in-game",
     hostId: lobby.hostId,
   });
-  syncLobbyMembership(lobby.id);
 
-  const enoughPlayers = currentLobbyPlayers().length >= 2;
+  const enoughPlayers = lobby.players.length >= 2;
   if (gameState.multiplayer.waitingForStart) {
     showOverlay({
       eyebrow: "Multiplayer Lobby",
-      title:
-        enoughPlayers && gameState.multiplayer.isHost
-          ? "Ready to Start"
-          : "Waiting for Players",
+      title: enoughPlayers && gameState.multiplayer.isHost ? "Ready to Start" : "Waiting for Players",
       text: enoughPlayers
         ? gameState.multiplayer.isHost
-          ? "Another player has joined. Launch the duel whenever you're ready."
-          : "The room is full. Waiting for the host to launch the duel."
-        : "Open this page in another tab or browser window and join the same lobby to start playing.",
+          ? "Another device joined the room. Start the match whenever you're ready."
+          : "The room is full. Waiting for the host to start the duel."
+        : "Share this server URL with another device and join the same lobby there.",
       primaryLabel: gameState.multiplayer.isHost ? "Start Match" : "Waiting...",
       action: gameState.multiplayer.isHost ? "start-match" : "noop",
     });
@@ -1064,107 +1003,85 @@ function enterMultiplayerRoom(lobby) {
   updateMatchHud();
 }
 
-function createLobby() {
-  leaveCurrentLobby();
-  const newLobby = {
-    id:
-      typeof crypto?.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `lobby-${Date.now()}`,
-    name: randomFrom(LOBBY_NAMES),
-    region: randomFrom(REGIONS),
-    ruleset: randomFrom(RULESETS),
-    players: [
-      {
-        id: clientProfile.id,
-        name: clientProfile.name,
-        joinedAt: Date.now(),
-        lastSeen: Date.now(),
-      },
-    ],
-    maxPlayers: 2,
-    hostId: clientProfile.id,
-    status: "waiting",
-    seed: Math.floor(Math.random() * 2147483647),
-  };
-
-  updateLobbies((existing) => [newLobby, ...existing]);
-  selectedLobbyId = newLobby.id;
-  enterMultiplayerRoom(newLobby);
-}
-
-function joinSelectedLobby() {
-  const selected = lobbies.find((entry) => entry.id === selectedLobbyId);
-  if (!selected) {
-    return;
-  }
-
-  const alreadyInLobby = selected.players.some(
-    (player) => player.id === clientProfile.id,
-  );
-  const full = selected.players.length >= selected.maxPlayers;
-  if (full && !alreadyInLobby) {
-    refreshLobbies();
-    return;
-  }
-
-  syncLobbyMembership(selected.id);
-  const latestLobby = loadLobbies().find((entry) => entry.id === selected.id);
-  if (latestLobby) {
-    enterMultiplayerRoom(latestLobby);
-  }
-}
-
-function startMultiplayerMatch() {
+async function startMultiplayerMatch() {
   if (!gameState?.multiplayer?.enabled || !gameState.multiplayer.isHost) {
     return;
   }
-  const lobby = loadLobbies().find((entry) => entry.id === currentLobbyId);
-  if (!lobby || lobby.players.length < 2) {
-    updateMatchHud();
+
+  try {
+    const payload = await apiRequest(`/api/lobbies/${currentLobbyId}/start`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: clientProfile.id,
+      }),
+    });
+    syncLobbyList(payload.lobby);
+    applyMatchStart();
+  } catch (error) {
     showOverlay({
       eyebrow: "Multiplayer Lobby",
       title: "Waiting for Players",
-      text: "You need one more player in the room before the duel can begin.",
+      text: error.message,
       primaryLabel: "Start Match",
       action: "start-match",
     });
-    return;
   }
-
-  const startedAt = Date.now();
-  updateLobbies((existing) =>
-    existing.map((entry) =>
-      entry.id === currentLobbyId
-        ? { ...entry, status: "in-game", startedAt }
-        : entry,
-    ),
-  );
-  broadcastMessage({
-    type: "match-start",
-    lobbyId: currentLobbyId,
-    startedAt,
-  });
-  applyMatchStart();
 }
 
 function applyMatchStart() {
   if (!gameState?.multiplayer?.enabled) {
     return;
   }
+
   gameState.multiplayer.waitingForStart = false;
-  gameState.multiplayer.started = true;
+  gameState.multiplayer.matchEnded = false;
+  gameState.multiplayer.result = null;
   gameState.paused = false;
   buttons.pause.textContent = "Live Match";
   hideOverlay();
   updateMatchHud();
 }
 
+async function requestRematch() {
+  if (!currentLobbyId) {
+    startSingleplayer();
+    return;
+  }
+
+  try {
+    const payload = await apiRequest(`/api/lobbies/${currentLobbyId}/rematch`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: clientProfile.id,
+      }),
+    });
+    await refreshLobbies();
+    enterMultiplayerRoom(payload.lobby);
+  } catch (error) {
+    showOverlay({
+      eyebrow: "Rematch Failed",
+      title: "Try Again",
+      text: error.message,
+      primaryLabel: "Rematch",
+      action: "rematch",
+    });
+  }
+}
+
+function syncLobbyList(updatedLobby) {
+  const existingIndex = lobbies.findIndex((lobby) => lobby.id === updatedLobby.id);
+  if (existingIndex === -1) {
+    lobbies = [updatedLobby, ...lobbies];
+  } else {
+    lobbies.splice(existingIndex, 1, updatedLobby);
+  }
+  setLobbies([...lobbies]);
+}
+
 function handleRemoteLoss(playerId) {
   if (!gameState?.multiplayer?.enabled || gameState.multiplayer.matchEnded) {
     return;
   }
-
   if (playerId === gameState.multiplayer.playerId) {
     return;
   }
@@ -1179,7 +1096,6 @@ function handleRemoteLoss(playerId) {
     primaryLabel: "Rematch",
     action: "rematch",
   });
-  finalizeLobbyStatus("finished");
   updateMatchHud();
 }
 
@@ -1188,15 +1104,9 @@ function syncCurrentLobbyView() {
     return;
   }
 
-  const lobby = loadLobbies().find((entry) => entry.id === currentLobbyId);
+  const lobby = getCurrentLobby();
   if (!lobby) {
-    suppressLobbyLeave = true;
     currentLobbyId = null;
-    suppressLobbyLeave = false;
-    if (animationFrameId) {
-      cancelAnimationFrame(animationFrameId);
-      animationFrameId = null;
-    }
     gameState = null;
     showScreen("menu");
     return;
@@ -1206,55 +1116,79 @@ function syncCurrentLobbyView() {
   if (lobby.status === "in-game" && gameState.multiplayer.waitingForStart) {
     applyMatchStart();
   }
+
   if (gameState.multiplayer.waitingForStart) {
     const enoughPlayers = lobby.players.length >= 2;
     showOverlay({
       eyebrow: "Multiplayer Lobby",
-      title:
-        enoughPlayers && gameState.multiplayer.isHost
-          ? "Ready to Start"
-          : "Waiting for Players",
+      title: enoughPlayers && gameState.multiplayer.isHost ? "Ready to Start" : "Waiting for Players",
       text: enoughPlayers
         ? gameState.multiplayer.isHost
-          ? "Another player has joined. Start the duel when you want."
-          : "The lobby is full. Waiting for the host to start the duel."
-        : "This room needs one more player. Open another tab and join it there.",
+          ? "Another device has joined. Start the duel when you want."
+          : "The room is full. Waiting for the host to start."
+        : "This room needs one more player connected to the same server.",
       primaryLabel: gameState.multiplayer.isHost ? "Start Match" : "Waiting...",
       action: gameState.multiplayer.isHost ? "start-match" : "noop",
     });
   }
+
   updateMatchHud();
 }
 
-function heartbeat() {
+async function heartbeat() {
   if (!currentLobbyId) {
     return;
   }
-  syncLobbyMembership(currentLobbyId);
-  syncCurrentLobbyView();
+
+  try {
+    const payload = await apiRequest(`/api/lobbies/${currentLobbyId}/heartbeat`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: clientProfile.id,
+        playerName: clientProfile.name,
+      }),
+    });
+    syncLobbyList(payload.lobby);
+    syncCurrentLobbyView();
+  } catch {}
 }
 
-function handleMatchMessage(message) {
-  if (!message || (message.lobbyId && message.lobbyId !== currentLobbyId)) {
-    if (message?.type === "lobby-sync") {
-      refreshLobbies();
-    }
+function connectEventStream() {
+  if (events) {
+    events.close();
+  }
+
+  events = new EventSource("/api/events");
+  events.onmessage = (event) => {
+    try {
+      handleServerEvent(JSON.parse(event.data));
+    } catch {}
+  };
+  events.onerror = () => {
+    matchHud.label.textContent = "Server Link";
+    matchHud.text.textContent = "Connection lost. Reconnecting to the multiplayer server...";
+  };
+}
+
+function handleServerEvent(message) {
+  if (!message) {
     return;
   }
 
   switch (message.type) {
     case "lobby-sync":
-      refreshLobbies();
+      setLobbies(message.lobbies ?? []);
       syncCurrentLobbyView();
       break;
     case "match-start":
-      refreshLobbies();
-      syncCurrentLobbyView();
-      applyMatchStart();
+      if (message.lobbyId === currentLobbyId) {
+        applyMatchStart();
+      }
       break;
     case "state-update":
       if (
         gameState?.multiplayer?.enabled &&
+        message.lobbyId === currentLobbyId &&
         message.playerId !== gameState.multiplayer.playerId
       ) {
         gameState.multiplayer.opponentId = message.playerId;
@@ -1265,6 +1199,7 @@ function handleMatchMessage(message) {
     case "garbage":
       if (
         gameState?.multiplayer?.enabled &&
+        message.lobbyId === currentLobbyId &&
         message.toPlayerId === gameState.multiplayer.playerId &&
         !gameState.multiplayer.matchEnded
       ) {
@@ -1273,7 +1208,9 @@ function handleMatchMessage(message) {
       }
       break;
     case "player-lost":
-      handleRemoteLoss(message.playerId);
+      if (message.lobbyId === currentLobbyId) {
+        handleRemoteLoss(message.playerId);
+      }
       break;
     default:
       break;
@@ -1281,8 +1218,8 @@ function handleMatchMessage(message) {
 }
 
 buttons.singleplayer.addEventListener("click", startSingleplayer);
-buttons.multiplayer.addEventListener("click", () => {
-  refreshLobbies();
+buttons.multiplayer.addEventListener("click", async () => {
+  await refreshLobbies();
   showScreen("lobby");
 });
 buttons.globalMenu.addEventListener("click", () => {
@@ -1291,8 +1228,8 @@ buttons.globalMenu.addEventListener("click", () => {
     animationFrameId = null;
   }
   gameState = null;
-  leaveCurrentLobby();
   hideOverlay();
+  leaveCurrentLobby();
   showScreen("menu");
 });
 buttons.refreshLobbies.addEventListener("click", refreshLobbies);
@@ -1320,27 +1257,7 @@ buttons.overlayPrimary.addEventListener("click", () => {
       resetGame(gameState.modeLabel);
       break;
     case "rematch":
-      if (currentLobbyId) {
-        updateLobbies((existing) =>
-          existing.map((lobby) =>
-            lobby.id === currentLobbyId
-              ? {
-                  ...lobby,
-                  status: "waiting",
-                  seed: Math.floor(Math.random() * 2147483647),
-                }
-              : lobby,
-          ),
-        );
-        const lobby = loadLobbies().find(
-          (entry) => entry.id === currentLobbyId,
-        );
-        if (lobby) {
-          enterMultiplayerRoom(lobby);
-        }
-      } else {
-        startSingleplayer();
-      }
+      requestRematch();
       break;
     default:
       break;
@@ -1400,25 +1317,18 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-window.addEventListener("storage", (event) => {
-  if (event.key === STORAGE_KEYS.lobbies) {
-    refreshLobbies();
-    syncCurrentLobbyView();
-  }
-});
-
 window.addEventListener("beforeunload", () => {
-  if (currentLobbyId) {
-    leaveCurrentLobby();
+  if (!currentLobbyId) {
+    return;
   }
+
+  navigator.sendBeacon(
+    `/api/lobbies/${currentLobbyId}/leave`,
+    JSON.stringify({ playerId: clientProfile.id }),
+  );
 });
 
-if (multiplayerChannel) {
-  multiplayerChannel.addEventListener("message", (event) =>
-    handleMatchMessage(event.data),
-  );
-}
-
+connectEventStream();
 heartbeatId = window.setInterval(heartbeat, HEARTBEAT_MS);
 refreshLobbies();
 showScreen("menu");

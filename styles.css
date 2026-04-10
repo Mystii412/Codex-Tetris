@@ -265,6 +265,7 @@ h3 {
 
 .game-layout {
   grid-template-columns: minmax(0, 1fr) 280px;
+  align-items: start;
 }
 
 .board-panel {
@@ -274,6 +275,8 @@ h3 {
 .board-wrap {
   position: relative;
   margin-top: 16px;
+  display: flex;
+  justify-content: center;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01)),
     #050d12;
@@ -285,20 +288,24 @@ h3 {
 #tetrisCanvas,
 #nextCanvas {
   display: block;
-  width: 100%;
   background: #03080b;
   border-radius: 18px;
 }
 
 #tetrisCanvas {
   aspect-ratio: 1 / 2;
+  width: auto;
+  max-width: 100%;
+  height: min(72vh, calc(100dvh - 240px));
 }
 
 #nextCanvas {
+  width: 100%;
   aspect-ratio: 1 / 1;
 }
 
 #opponentCanvas {
+  width: 100%;
   aspect-ratio: 1 / 2;
 }
 
@@ -335,6 +342,10 @@ h3 {
 
 .match-card p {
   margin: 0;
+}
+
+.hidden-panel {
+  display: none;
 }
 
 .overlay {
@@ -381,6 +392,11 @@ h3 {
   .menu-actions {
     justify-content: flex-start;
   }
+
+  #tetrisCanvas {
+    width: min(100%, 360px);
+    height: auto;
+  }
 }
 
 @media (max-width: 720px) {
@@ -400,5 +416,9 @@ h3 {
   .panel,
   .panel-wide {
     border-radius: 22px;
+  }
+
+  #tetrisCanvas {
+    width: min(100%, 300px);
   }
 }
