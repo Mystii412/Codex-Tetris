@@ -111,6 +111,19 @@
               <canvas id="nextCanvas" width="160" height="160" aria-label="Next Tetris piece"></canvas>
             </section>
 
+            <section class="panel next-panel">
+              <p class="eyebrow">Block Skin</p>
+              <label class="skin-picker" for="blockSkinSelect">
+                <span>Choose a style</span>
+                <select id="blockSkinSelect" aria-label="Select block skin">
+                  <option value="bevel">Bevel</option>
+                  <option value="arcade">Arcade</option>
+                  <option value="glass">Glass</option>
+                  <option value="neo">Neo</option>
+                </select>
+              </label>
+            </section>
+
             <section class="panel next-panel" id="opponentPanel">
               <p class="eyebrow">Opponent Board</p>
               <canvas id="opponentCanvas" width="160" height="320" aria-label="Opponent Tetris board"></canvas>

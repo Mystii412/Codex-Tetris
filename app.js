@@ -46,6 +46,10 @@ const panels = {
   opponent: document.getElementById("opponentPanel"),
 };
 
+const inputs = {
+  blockSkin: document.getElementById("blockSkinSelect"),
+};
+
 const canvas = document.getElementById("tetrisCanvas");
 const context = canvas.getContext("2d");
 const nextCanvas = document.getElementById("nextCanvas");
@@ -63,6 +67,7 @@ const SNAPSHOT_INTERVAL_MS = 150;
 const STORAGE_KEYS = {
   profileBase: "codex-tetris-profile-base",
   sessionProfile: "codex-tetris-session-profile",
+  blockSkin: "codex-tetris-block-skin",
 };
 const COLORS = {
   I: "#39cfff",
@@ -91,6 +96,140 @@ function adjustColor(hex, amount) {
 
   return `rgb(${red}, ${green}, ${blue})`;
 }
+
+const BLOCK_SKINS = {
+  bevel: {
+    drawCell(target, x, y, color, size) {
+      const px = x * size;
+      const py = y * size;
+      const inset = Math.max(2, Math.floor(size * 0.1));
+      const innerSize = size - inset * 2;
+
+      const baseGradient = target.createLinearGradient(px, py, px + size, py + size);
+      baseGradient.addColorStop(0, adjustColor(color, 58));
+      baseGradient.addColorStop(0.45, color);
+      baseGradient.addColorStop(1, adjustColor(color, -34));
+
+      target.fillStyle = "rgba(3, 8, 11, 0.42)";
+      target.fillRect(px + 1, py + 2, size - 2, size - 2);
+
+      target.fillStyle = baseGradient;
+      target.fillRect(px, py, size, size);
+
+      const glossGradient = target.createLinearGradient(px, py, px, py + size);
+      glossGradient.addColorStop(0, "rgba(255,255,255,0.26)");
+      glossGradient.addColorStop(0.38, "rgba(255,255,255,0.08)");
+      glossGradient.addColorStop(1, "rgba(255,255,255,0)");
+      target.fillStyle = glossGradient;
+      target.fillRect(px + inset, py + inset, innerSize, innerSize);
+
+      target.strokeStyle = "rgba(255,255,255,0.3)";
+      target.lineWidth = 1.5;
+      target.beginPath();
+      target.moveTo(px + 1, py + size - 1);
+      target.lineTo(px + 1, py + 1);
+      target.lineTo(px + size - 1, py + 1);
+      target.stroke();
+
+      target.strokeStyle = "rgba(0,0,0,0.3)";
+      target.beginPath();
+      target.moveTo(px + size - 1, py + 1);
+      target.lineTo(px + size - 1, py + size - 1);
+      target.lineTo(px + 1, py + size - 1);
+      target.stroke();
+
+      target.strokeStyle = "rgba(255,255,255,0.1)";
+      target.strokeRect(px + 0.75, py + 0.75, size - 1.5, size - 1.5);
+    },
+  },
+  arcade: {
+    drawCell(target, x, y, color, size) {
+      const px = x * size;
+      const py = y * size;
+      const inset = Math.max(2, Math.floor(size * 0.12));
+      const midInset = inset + 2;
+
+      target.fillStyle = "rgba(2, 6, 8, 0.5)";
+      target.fillRect(px + 2, py + 3, size - 2, size - 2);
+
+      target.fillStyle = adjustColor(color, -28);
+      target.fillRect(px, py, size, size);
+
+      target.fillStyle = color;
+      target.fillRect(px + inset, py + inset, size - inset * 2, size - inset * 2);
+
+      target.fillStyle = adjustColor(color, 72);
+      target.fillRect(px + inset, py + inset, size - inset * 2, Math.max(3, Math.floor(size * 0.18)));
+      target.fillRect(px + inset, py + inset, Math.max(3, Math.floor(size * 0.18)), size - inset * 2);
+
+      target.fillStyle = adjustColor(color, 20);
+      target.fillRect(px + midInset, py + midInset, size - midInset * 2, size - midInset * 2);
+
+      target.strokeStyle = "rgba(0, 0, 0, 0.42)";
+      target.lineWidth = 1.25;
+      target.strokeRect(px + 0.6, py + 0.6, size - 1.2, size - 1.2);
+    },
+  },
+  glass: {
+    drawCell(target, x, y, color, size) {
+      const px = x * size;
+      const py = y * size;
+      const inset = Math.max(2, Math.floor(size * 0.1));
+      const innerWidth = size - inset * 2;
+
+      const shellGradient = target.createLinearGradient(px, py, px + size, py + size);
+      shellGradient.addColorStop(0, "rgba(255,255,255,0.34)");
+      shellGradient.addColorStop(0.16, adjustColor(color, 55));
+      shellGradient.addColorStop(0.5, color);
+      shellGradient.addColorStop(1, adjustColor(color, -30));
+
+      target.fillStyle = "rgba(2, 6, 8, 0.4)";
+      target.fillRect(px + 1, py + 2, size - 2, size - 2);
+
+      target.fillStyle = shellGradient;
+      target.fillRect(px, py, size, size);
+
+      const innerGradient = target.createLinearGradient(px, py + inset, px, py + size - inset);
+      innerGradient.addColorStop(0, "rgba(255,255,255,0.3)");
+      innerGradient.addColorStop(0.45, "rgba(255,255,255,0.09)");
+      innerGradient.addColorStop(1, "rgba(255,255,255,0.03)");
+      target.fillStyle = innerGradient;
+      target.fillRect(px + inset, py + inset, innerWidth, innerWidth);
+
+      target.fillStyle = "rgba(255,255,255,0.2)";
+      target.fillRect(px + inset, py + inset, innerWidth, Math.max(3, Math.floor(size * 0.15)));
+
+      target.strokeStyle = "rgba(255,255,255,0.26)";
+      target.lineWidth = 1.2;
+      target.strokeRect(px + 0.6, py + 0.6, size - 1.2, size - 1.2);
+    },
+  },
+  neo: {
+    drawCell(target, x, y, color, size) {
+      const px = x * size;
+      const py = y * size;
+      const inset = Math.max(3, Math.floor(size * 0.14));
+      const innerWidth = size - inset * 2;
+
+      target.fillStyle = "rgba(0, 0, 0, 0.28)";
+      target.fillRect(px + 2, py + 2, size - 2, size - 2);
+
+      target.fillStyle = adjustColor(color, -46);
+      target.fillRect(px, py, size, size);
+
+      target.fillStyle = color;
+      target.fillRect(px + inset, py + inset, innerWidth, innerWidth);
+
+      target.strokeStyle = adjustColor(color, 88);
+      target.lineWidth = 2;
+      target.strokeRect(px + inset - 0.5, py + inset - 0.5, innerWidth + 1, innerWidth + 1);
+
+      target.strokeStyle = "rgba(255,255,255,0.18)";
+      target.lineWidth = 1;
+      target.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
+    },
+  },
+};
 
 const SHAPES = {
   I: [
@@ -141,6 +280,7 @@ let heartbeatId = null;
 let events = null;
 let isLeavingLobby = false;
 let isSyncingLobbies = false;
+let currentBlockSkin = getStoredBlockSkin();
 
 const clientProfile = getOrCreateProfile();
 
@@ -154,6 +294,38 @@ function showScreen(screenName) {
 
 function createMatrix(width, height) {
   return Array.from({ length: height }, () => Array(width).fill(0));
+}
+
+function getStoredBlockSkin() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS.blockSkin);
+    if (saved && BLOCK_SKINS[saved]) {
+      return saved;
+    }
+  } catch {}
+
+  return "bevel";
+}
+
+function setBlockSkin(skinName) {
+  if (!BLOCK_SKINS[skinName]) {
+    return;
+  }
+
+  currentBlockSkin = skinName;
+  if (inputs.blockSkin) {
+    inputs.blockSkin.value = skinName;
+  }
+
+  try {
+    localStorage.setItem(STORAGE_KEYS.blockSkin, skinName);
+  } catch {}
+
+  if (gameState) {
+    drawBoard();
+    drawNextPiece();
+    drawOpponentBoard();
+  }
 }
 
 function makeMulberry32(seed) {
@@ -262,46 +434,7 @@ async function apiRequest(path, options = {}) {
 }
 
 function drawCell(target, x, y, color, size) {
-  const px = x * size;
-  const py = y * size;
-  const inset = Math.max(2, Math.floor(size * 0.1));
-  const innerSize = size - inset * 2;
-
-  const baseGradient = target.createLinearGradient(px, py, px + size, py + size);
-  baseGradient.addColorStop(0, adjustColor(color, 58));
-  baseGradient.addColorStop(0.45, color);
-  baseGradient.addColorStop(1, adjustColor(color, -34));
-
-  target.fillStyle = "rgba(3, 8, 11, 0.42)";
-  target.fillRect(px + 1, py + 2, size - 2, size - 2);
-
-  target.fillStyle = baseGradient;
-  target.fillRect(px, py, size, size);
-
-  const glossGradient = target.createLinearGradient(px, py, px, py + size);
-  glossGradient.addColorStop(0, "rgba(255,255,255,0.26)");
-  glossGradient.addColorStop(0.38, "rgba(255,255,255,0.08)");
-  glossGradient.addColorStop(1, "rgba(255,255,255,0)");
-  target.fillStyle = glossGradient;
-  target.fillRect(px + inset, py + inset, innerSize, innerSize);
-
-  target.strokeStyle = "rgba(255,255,255,0.3)";
-  target.lineWidth = 1.5;
-  target.beginPath();
-  target.moveTo(px + 1, py + size - 1);
-  target.lineTo(px + 1, py + 1);
-  target.lineTo(px + size - 1, py + 1);
-  target.stroke();
-
-  target.strokeStyle = "rgba(0,0,0,0.3)";
-  target.beginPath();
-  target.moveTo(px + size - 1, py + 1);
-  target.lineTo(px + size - 1, py + size - 1);
-  target.lineTo(px + 1, py + size - 1);
-  target.stroke();
-
-  target.strokeStyle = "rgba(255,255,255,0.1)";
-  target.strokeRect(px + 0.75, py + 0.75, size - 1.5, size - 1.5);
+  BLOCK_SKINS[currentBlockSkin].drawCell(target, x, y, color, size);
 }
 
 function drawPiece(target, piece, size, alpha = 1) {
@@ -1308,6 +1441,13 @@ function handleServerEvent(message) {
     default:
       break;
   }
+}
+
+if (inputs.blockSkin) {
+  inputs.blockSkin.value = currentBlockSkin;
+  inputs.blockSkin.addEventListener("change", (event) => {
+    setBlockSkin(event.target.value);
+  });
 }
 
 buttons.singleplayer.addEventListener("click", startSingleplayer);
