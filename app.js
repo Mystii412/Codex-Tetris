@@ -75,6 +75,23 @@ const COLORS = {
   garbage: "#314554",
 };
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function adjustColor(hex, amount) {
+  const normalized = hex.replace("#", "");
+  const safeHex = normalized.length === 3
+    ? normalized.split("").map((char) => char + char).join("")
+    : normalized;
+
+  const red = clamp(parseInt(safeHex.slice(0, 2), 16) + amount, 0, 255);
+  const green = clamp(parseInt(safeHex.slice(2, 4), 16) + amount, 0, 255);
+  const blue = clamp(parseInt(safeHex.slice(4, 6), 16) + amount, 0, 255);
+
+  return `rgb(${red}, ${green}, ${blue})`;
+}
+
 const SHAPES = {
   I: [
     [0, 0, 0, 0],
@@ -245,12 +262,46 @@ async function apiRequest(path, options = {}) {
 }
 
 function drawCell(target, x, y, color, size) {
-  target.fillStyle = color;
-  target.fillRect(x * size, y * size, size, size);
-  target.fillStyle = "rgba(255,255,255,0.12)";
-  target.fillRect(x * size + 2, y * size + 2, size - 4, size - 4);
-  target.strokeStyle = "rgba(0,0,0,0.22)";
-  target.strokeRect(x * size + 1, y * size + 1, size - 2, size - 2);
+  const px = x * size;
+  const py = y * size;
+  const inset = Math.max(2, Math.floor(size * 0.1));
+  const innerSize = size - inset * 2;
+
+  const baseGradient = target.createLinearGradient(px, py, px + size, py + size);
+  baseGradient.addColorStop(0, adjustColor(color, 58));
+  baseGradient.addColorStop(0.45, color);
+  baseGradient.addColorStop(1, adjustColor(color, -34));
+
+  target.fillStyle = "rgba(3, 8, 11, 0.42)";
+  target.fillRect(px + 1, py + 2, size - 2, size - 2);
+
+  target.fillStyle = baseGradient;
+  target.fillRect(px, py, size, size);
+
+  const glossGradient = target.createLinearGradient(px, py, px, py + size);
+  glossGradient.addColorStop(0, "rgba(255,255,255,0.26)");
+  glossGradient.addColorStop(0.38, "rgba(255,255,255,0.08)");
+  glossGradient.addColorStop(1, "rgba(255,255,255,0)");
+  target.fillStyle = glossGradient;
+  target.fillRect(px + inset, py + inset, innerSize, innerSize);
+
+  target.strokeStyle = "rgba(255,255,255,0.3)";
+  target.lineWidth = 1.5;
+  target.beginPath();
+  target.moveTo(px + 1, py + size - 1);
+  target.lineTo(px + 1, py + 1);
+  target.lineTo(px + size - 1, py + 1);
+  target.stroke();
+
+  target.strokeStyle = "rgba(0,0,0,0.3)";
+  target.beginPath();
+  target.moveTo(px + size - 1, py + 1);
+  target.lineTo(px + size - 1, py + size - 1);
+  target.lineTo(px + 1, py + size - 1);
+  target.stroke();
+
+  target.strokeStyle = "rgba(255,255,255,0.1)";
+  target.strokeRect(px + 0.75, py + 0.75, size - 1.5, size - 1.5);
 }
 
 function drawPiece(target, piece, size, alpha = 1) {
@@ -284,11 +335,18 @@ function drawGhostPiece() {
       }
       const cellX = (gameState.active.x + x) * BLOCK;
       const cellY = (ghostY + y) * BLOCK;
-      context.fillStyle = COLORS[gameState.active.type];
-      context.fillRect(cellX + 6, cellY + 6, BLOCK - 12, BLOCK - 12);
-      context.strokeStyle = "rgba(255, 255, 255, 0.85)";
-      context.lineWidth = 2;
-      context.strokeRect(cellX + 4, cellY + 4, BLOCK - 8, BLOCK - 8);
+      const ghostInset = Math.max(4, Math.floor(BLOCK * 0.18));
+      const ghostSize = BLOCK - ghostInset * 2;
+      context.fillStyle = "rgba(255, 255, 255, 0.06)";
+      context.fillRect(cellX + ghostInset, cellY + ghostInset, ghostSize, ghostSize);
+      context.strokeStyle = "rgba(255, 255, 255, 0.5)";
+      context.lineWidth = 1.5;
+      context.strokeRect(
+        cellX + ghostInset - 1,
+        cellY + ghostInset - 1,
+        ghostSize + 2,
+        ghostSize + 2,
+      );
     });
   });
 
