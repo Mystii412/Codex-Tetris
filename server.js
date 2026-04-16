@@ -5,7 +5,7 @@ const path = require("path");
 const { URL } = require("url");
 
 const HOST = process.env.HOST || "0.0.0.0";
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3001);
 const ROOT = __dirname;
 const PLAYER_STALE_MS = 20000;
 const CLEANUP_INTERVAL_MS = 5000;
@@ -112,6 +112,7 @@ function serializeLobby(lobby) {
     status: lobby.status,
     seed: lobby.seed,
     startedAt: lobby.startedAt || null,
+    rematchReadyPlayerIds: [...(lobby.rematchReadyPlayerIds || [])],
     players: lobby.players.map((player) => ({
       id: player.id,
       name: player.name,
@@ -146,7 +147,12 @@ function cleanupLobbies() {
   const now = Date.now();
 
   for (const [lobbyId, lobby] of lobbies.entries()) {
-    lobby.players = lobby.players.filter((player) => isPlayerActive(player, now));
+    lobby.players = lobby.players.filter((player) =>
+      isPlayerActive(player, now),
+    );
+    lobby.rematchReadyPlayerIds = (lobby.rematchReadyPlayerIds || []).filter((playerId) =>
+      lobby.players.some((player) => player.id === playerId),
+    );
 
     if (!lobby.players.length) {
       lobbies.delete(lobbyId);
@@ -214,6 +220,9 @@ function leaveLobby(lobbyId, playerId) {
   }
 
   lobby.players = lobby.players.filter((player) => player.id !== playerId);
+  lobby.rematchReadyPlayerIds = (lobby.rematchReadyPlayerIds || []).filter(
+    (readyPlayerId) => readyPlayerId !== playerId,
+  );
   if (!lobby.players.length) {
     lobbies.delete(lobbyId);
     notifyLobbySync();
@@ -227,13 +236,15 @@ function leaveLobby(lobbyId, playerId) {
   if (lobby.status === "in-game" && lobby.players.length < 2) {
     lobby.status = "waiting";
     lobby.startedAt = null;
+    lobby.rematchReadyPlayerIds = [];
   }
 
   notifyLobbySync();
 }
 
 function serveStatic(requestPath, response) {
-  const relativePath = requestPath === "/" ? "index.html" : requestPath.replace(/^\/+/, "");
+  const relativePath =
+    requestPath === "/" ? "index.html" : requestPath.replace(/^\/+/, "");
   const filePath = path.resolve(ROOT, relativePath);
 
   if (!filePath.startsWith(ROOT)) {
@@ -270,7 +281,9 @@ async function handleApi(request, response, url) {
     });
     response.write("\n");
     eventClients.add(response);
-    response.write(`data: ${JSON.stringify({ type: "lobby-sync", lobbies: serializeLobbies() })}\n\n`);
+    response.write(
+      `data: ${JSON.stringify({ type: "lobby-sync", lobbies: serializeLobbies() })}\n\n`,
+    );
     request.on("close", () => {
       eventClients.delete(response);
     });
@@ -290,6 +303,7 @@ async function handleApi(request, response, url) {
       status: "waiting",
       seed: Math.floor(Math.random() * 2147483647),
       startedAt: null,
+      rematchReadyPlayerIds: [],
       players: [
         {
           id: body.playerId,
@@ -353,8 +367,12 @@ async function handleApi(request, response, url) {
       if (lobby.players.length < 2) {
         throw new Error("Two players are required to start.");
       }
+      if (lobby.status === "finished") {
+        throw new Error("Both players need to click rematch before a new round can start.");
+      }
       lobby.status = "in-game";
       lobby.startedAt = Date.now();
+      lobby.rematchReadyPlayerIds = [];
       notifyLobbySync();
       broadcast({
         type: "match-start",
@@ -373,9 +391,18 @@ async function handleApi(request, response, url) {
       if (!lobby.players.some((player) => player.id === body.playerId)) {
         throw new Error("Player is not in this lobby.");
       }
-      lobby.status = "waiting";
-      lobby.startedAt = null;
-      lobby.seed = Math.floor(Math.random() * 2147483647);
+      const readyIds = new Set(lobby.rematchReadyPlayerIds || []);
+      readyIds.add(body.playerId);
+      lobby.rematchReadyPlayerIds = [...readyIds];
+
+      if (lobby.rematchReadyPlayerIds.length >= lobby.players.length) {
+        lobby.status = "waiting";
+        lobby.startedAt = null;
+        lobby.seed = Math.floor(Math.random() * 2147483647);
+        lobby.rematchReadyPlayerIds = [];
+      } else {
+        lobby.status = "finished";
+      }
       notifyLobbySync();
       sendJson(response, 200, { lobby: serializeLobby(lobby) });
       return;
@@ -409,6 +436,7 @@ async function handleApi(request, response, url) {
     if (action === "lost") {
       const lobby = getLobby(lobbyId);
       lobby.status = "finished";
+      lobby.rematchReadyPlayerIds = [];
       notifyLobbySync();
       broadcast({
         type: "player-lost",

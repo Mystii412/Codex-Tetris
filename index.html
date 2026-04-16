@@ -28,6 +28,26 @@
             </p>
           </div>
           <div class="menu-actions">
+            <section class="account-card">
+              <p class="eyebrow">Account</p>
+              <div class="account-summary">
+                <strong id="accountNameValue">Guest Pilot</strong>
+                <p id="accountStatusText">Create an account to keep your record between sessions.</p>
+              </div>
+              <label class="account-field" for="accountNameInput">
+                <span>Username</span>
+                <input id="accountNameInput" type="text" maxlength="18" autocomplete="username">
+              </label>
+              <label class="account-field" for="accountPasswordInput">
+                <span>Password</span>
+                <input id="accountPasswordInput" type="password" maxlength="40" autocomplete="current-password">
+              </label>
+              <div class="account-actions">
+                <button class="primary-button" id="createAccountButton" type="button">Create Account</button>
+                <button class="secondary-button" id="signInButton" type="button">Sign In</button>
+                <button class="ghost-button" id="signOutButton" type="button">Use Guest</button>
+              </div>
+            </section>
             <button class="primary-button" id="singleplayerButton" type="button">Singleplayer</button>
             <button class="secondary-button" id="multiplayerButton" type="button">Multiplayer</button>
           </div>
@@ -92,10 +112,13 @@
 
           <aside class="game-sidebar">
             <section class="panel stat-panel">
-              <p class="eyebrow">Stats</p>
+              <p class="eyebrow">Profile + Stats</p>
+              <div class="stat-row"><span>Player</span><strong id="playerNameValue">Guest Pilot</strong></div>
               <div class="stat-row"><span>Score</span><strong id="scoreValue">0</strong></div>
               <div class="stat-row"><span>Lines</span><strong id="linesValue">0</strong></div>
               <div class="stat-row"><span>Level</span><strong id="levelValue">1</strong></div>
+              <div class="stat-row"><span>Wins</span><strong id="winsValue">0</strong></div>
+              <div class="stat-row"><span>Losses</span><strong id="lossesValue">0</strong></div>
             </section>
 
             <section class="panel next-panel">
@@ -115,12 +138,7 @@
               <p class="eyebrow">Block Skin</p>
               <label class="skin-picker" for="blockSkinSelect">
                 <span>Choose a style</span>
-                <select id="blockSkinSelect" aria-label="Select block skin">
-                  <option value="bevel">Bevel</option>
-                  <option value="arcade">Arcade</option>
-                  <option value="glass">Glass</option>
-                  <option value="neo">Neo</option>
-                </select>
+                <select id="blockSkinSelect" aria-label="Select block skin"></select>
               </label>
             </section>
 

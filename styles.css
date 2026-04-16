@@ -145,6 +145,67 @@ h3 {
   align-items: stretch;
 }
 
+.account-card {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.account-summary {
+  display: grid;
+  gap: 6px;
+}
+
+.account-summary p,
+.account-summary strong {
+  margin: 0;
+}
+
+.account-summary p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.account-field {
+  display: grid;
+  gap: 8px;
+}
+
+.account-field span {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.account-field input,
+.skin-picker select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+    rgba(4, 11, 16, 0.95);
+  color: var(--text);
+  border-radius: 14px;
+  font: inherit;
+  outline: none;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.account-field input:focus,
+.skin-picker select:hover,
+.skin-picker select:focus {
+  border-color: rgba(90, 212, 255, 0.45);
+  box-shadow: 0 0 0 3px rgba(57, 207, 255, 0.12);
+}
+
+.account-actions {
+  display: grid;
+  gap: 10px;
+}
+
 .primary-button,
 .secondary-button,
 .ghost-button {
@@ -264,7 +325,7 @@ h3 {
 }
 
 .game-layout {
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
   align-items: start;
 }
 
@@ -295,7 +356,7 @@ h3 {
   aspect-ratio: 1 / 2;
   width: auto;
   max-width: 100%;
-  height: min(72vh, calc(100dvh - 240px));
+  height: min(64vh, calc(100dvh - 220px));
 }
 
 #nextCanvas {
@@ -307,17 +368,27 @@ h3 {
 #opponentCanvas {
   width: 100%;
   aspect-ratio: 1 / 2;
+  display: block;
+  max-width: 140px;
+  margin: 0 auto;
 }
 
 .game-sidebar {
   display: grid;
-  gap: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .stat-panel,
 .next-panel,
 .controls-panel {
   min-height: 0;
+}
+
+.stat-panel,
+.controls-panel,
+#opponentPanel {
+  grid-column: 1 / -1;
 }
 
 .stat-row {
@@ -353,26 +424,6 @@ h3 {
 .skin-picker span {
   color: var(--muted);
   font-size: 0.92rem;
-}
-
-.skin-picker select {
-  width: 100%;
-  padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
-    rgba(4, 11, 16, 0.95);
-  color: var(--text);
-  border-radius: 14px;
-  font: inherit;
-  outline: none;
-  transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
-}
-
-.skin-picker select:hover,
-.skin-picker select:focus {
-  border-color: rgba(90, 212, 255, 0.45);
-  box-shadow: 0 0 0 3px rgba(57, 207, 255, 0.12);
 }
 
 .hidden-panel {
@@ -428,6 +479,10 @@ h3 {
     width: min(100%, 360px);
     height: auto;
   }
+
+  .game-sidebar {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -447,6 +502,11 @@ h3 {
   .panel,
   .panel-wide {
     border-radius: 22px;
+  }
+
+  .game-sidebar,
+  .account-actions {
+    grid-template-columns: 1fr;
   }
 
   #tetrisCanvas {

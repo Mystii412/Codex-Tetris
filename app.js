@@ -14,6 +14,9 @@ const buttons = {
   pause: document.getElementById("pauseButton"),
   overlayPrimary: document.getElementById("overlayPrimaryButton"),
   overlaySecondary: document.getElementById("overlaySecondaryButton"),
+  createAccount: document.getElementById("createAccountButton"),
+  signIn: document.getElementById("signInButton"),
+  signOut: document.getElementById("signOutButton"),
 };
 
 const lobbyElements = {
@@ -24,10 +27,13 @@ const lobbyElements = {
 };
 
 const hud = {
+  player: document.getElementById("playerNameValue"),
   mode: document.getElementById("gameModeLabel"),
   score: document.getElementById("scoreValue"),
   lines: document.getElementById("linesValue"),
   level: document.getElementById("levelValue"),
+  wins: document.getElementById("winsValue"),
+  losses: document.getElementById("lossesValue"),
 };
 
 const matchHud = {
@@ -48,6 +54,13 @@ const panels = {
 
 const inputs = {
   blockSkin: document.getElementById("blockSkinSelect"),
+  accountName: document.getElementById("accountNameInput"),
+  accountPassword: document.getElementById("accountPasswordInput"),
+};
+
+const accountElements = {
+  name: document.getElementById("accountNameValue"),
+  status: document.getElementById("accountStatusText"),
 };
 
 const canvas = document.getElementById("tetrisCanvas");
@@ -64,10 +77,14 @@ const NEXT_BLOCK = nextCanvas.width / 6;
 const OPPONENT_BLOCK = opponentCanvas.width / COLS;
 const HEARTBEAT_MS = 5000;
 const SNAPSHOT_INTERVAL_MS = 150;
+const LOCK_DELAY_MS = 550;
+const MAX_LOCK_RESETS = 12;
 const STORAGE_KEYS = {
   profileBase: "codex-tetris-profile-base",
   sessionProfile: "codex-tetris-session-profile",
   blockSkin: "codex-tetris-block-skin",
+  accounts: "codex-tetris-accounts",
+  currentAccountId: "codex-tetris-current-account-id",
 };
 const COLORS = {
   I: "#39cfff",
@@ -97,139 +114,194 @@ function adjustColor(hex, amount) {
   return `rgb(${red}, ${green}, ${blue})`;
 }
 
-const BLOCK_SKINS = {
-  bevel: {
-    drawCell(target, x, y, color, size) {
-      const px = x * size;
-      const py = y * size;
-      const inset = Math.max(2, Math.floor(size * 0.1));
-      const innerSize = size - inset * 2;
+function drawBevelSkin(target, px, py, color, size, config) {
+  const inset = Math.max(2, Math.floor(size * (config.insetScale ?? 0.1)));
+  const innerSize = size - inset * 2;
+  const baseGradient = target.createLinearGradient(px, py, px + size, py + size);
+  baseGradient.addColorStop(0, adjustColor(color, config.light ?? 58));
+  baseGradient.addColorStop(0.45, adjustColor(color, config.mid ?? 0));
+  baseGradient.addColorStop(1, adjustColor(color, config.dark ?? -34));
 
-      const baseGradient = target.createLinearGradient(px, py, px + size, py + size);
-      baseGradient.addColorStop(0, adjustColor(color, 58));
-      baseGradient.addColorStop(0.45, color);
-      baseGradient.addColorStop(1, adjustColor(color, -34));
+  target.fillStyle = `rgba(3, 8, 11, ${config.shadowAlpha ?? 0.42})`;
+  target.fillRect(px + 1, py + 2, size - 2, size - 2);
+  target.fillStyle = baseGradient;
+  target.fillRect(px, py, size, size);
 
-      target.fillStyle = "rgba(3, 8, 11, 0.42)";
-      target.fillRect(px + 1, py + 2, size - 2, size - 2);
+  const glossGradient = target.createLinearGradient(px, py, px, py + size);
+  glossGradient.addColorStop(0, `rgba(255,255,255,${config.glossTop ?? 0.26})`);
+  glossGradient.addColorStop(0.4, `rgba(255,255,255,${config.glossMid ?? 0.08})`);
+  glossGradient.addColorStop(1, "rgba(255,255,255,0)");
+  target.fillStyle = glossGradient;
+  target.fillRect(px + inset, py + inset, innerSize, innerSize);
 
-      target.fillStyle = baseGradient;
-      target.fillRect(px, py, size, size);
+  target.strokeStyle = `rgba(255,255,255,${config.edgeLight ?? 0.3})`;
+  target.lineWidth = 1.5;
+  target.beginPath();
+  target.moveTo(px + 1, py + size - 1);
+  target.lineTo(px + 1, py + 1);
+  target.lineTo(px + size - 1, py + 1);
+  target.stroke();
 
-      const glossGradient = target.createLinearGradient(px, py, px, py + size);
-      glossGradient.addColorStop(0, "rgba(255,255,255,0.26)");
-      glossGradient.addColorStop(0.38, "rgba(255,255,255,0.08)");
-      glossGradient.addColorStop(1, "rgba(255,255,255,0)");
-      target.fillStyle = glossGradient;
-      target.fillRect(px + inset, py + inset, innerSize, innerSize);
+  target.strokeStyle = `rgba(0,0,0,${config.edgeDark ?? 0.3})`;
+  target.beginPath();
+  target.moveTo(px + size - 1, py + 1);
+  target.lineTo(px + size - 1, py + size - 1);
+  target.lineTo(px + 1, py + size - 1);
+  target.stroke();
 
-      target.strokeStyle = "rgba(255,255,255,0.3)";
-      target.lineWidth = 1.5;
-      target.beginPath();
-      target.moveTo(px + 1, py + size - 1);
-      target.lineTo(px + 1, py + 1);
-      target.lineTo(px + size - 1, py + 1);
-      target.stroke();
+  target.strokeStyle = `rgba(255,255,255,${config.frameAlpha ?? 0.1})`;
+  target.strokeRect(px + 0.75, py + 0.75, size - 1.5, size - 1.5);
+}
 
-      target.strokeStyle = "rgba(0,0,0,0.3)";
-      target.beginPath();
-      target.moveTo(px + size - 1, py + 1);
-      target.lineTo(px + size - 1, py + size - 1);
-      target.lineTo(px + 1, py + size - 1);
-      target.stroke();
+function drawArcadeSkin(target, px, py, color, size, config) {
+  const inset = Math.max(2, Math.floor(size * (config.insetScale ?? 0.12)));
+  const midInset = inset + (config.midOffset ?? 2);
+  const strip = Math.max(3, Math.floor(size * (config.stripScale ?? 0.18)));
 
-      target.strokeStyle = "rgba(255,255,255,0.1)";
-      target.strokeRect(px + 0.75, py + 0.75, size - 1.5, size - 1.5);
-    },
-  },
-  arcade: {
-    drawCell(target, x, y, color, size) {
-      const px = x * size;
-      const py = y * size;
-      const inset = Math.max(2, Math.floor(size * 0.12));
-      const midInset = inset + 2;
+  target.fillStyle = `rgba(2, 6, 8, ${config.shadowAlpha ?? 0.5})`;
+  target.fillRect(px + 2, py + 3, size - 2, size - 2);
+  target.fillStyle = adjustColor(color, config.shellDark ?? -28);
+  target.fillRect(px, py, size, size);
+  target.fillStyle = adjustColor(color, config.baseShift ?? 0);
+  target.fillRect(px + inset, py + inset, size - inset * 2, size - inset * 2);
+  target.fillStyle = adjustColor(color, config.stripLight ?? 72);
+  target.fillRect(px + inset, py + inset, size - inset * 2, strip);
+  target.fillRect(px + inset, py + inset, strip, size - inset * 2);
+  target.fillStyle = adjustColor(color, config.coreShift ?? 20);
+  target.fillRect(px + midInset, py + midInset, size - midInset * 2, size - midInset * 2);
+  target.strokeStyle = `rgba(0, 0, 0, ${config.frameAlpha ?? 0.42})`;
+  target.lineWidth = 1.25;
+  target.strokeRect(px + 0.6, py + 0.6, size - 1.2, size - 1.2);
+}
 
-      target.fillStyle = "rgba(2, 6, 8, 0.5)";
-      target.fillRect(px + 2, py + 3, size - 2, size - 2);
+function drawGlassSkin(target, px, py, color, size, config) {
+  const inset = Math.max(2, Math.floor(size * (config.insetScale ?? 0.1)));
+  const innerSize = size - inset * 2;
+  const shellGradient = target.createLinearGradient(px, py, px + size, py + size);
+  shellGradient.addColorStop(0, `rgba(255,255,255,${config.shellAlpha ?? 0.34})`);
+  shellGradient.addColorStop(0.16, adjustColor(color, config.light ?? 55));
+  shellGradient.addColorStop(0.5, adjustColor(color, config.mid ?? 0));
+  shellGradient.addColorStop(1, adjustColor(color, config.dark ?? -30));
 
-      target.fillStyle = adjustColor(color, -28);
-      target.fillRect(px, py, size, size);
+  target.fillStyle = `rgba(2, 6, 8, ${config.shadowAlpha ?? 0.4})`;
+  target.fillRect(px + 1, py + 2, size - 2, size - 2);
+  target.fillStyle = shellGradient;
+  target.fillRect(px, py, size, size);
 
-      target.fillStyle = color;
-      target.fillRect(px + inset, py + inset, size - inset * 2, size - inset * 2);
+  const innerGradient = target.createLinearGradient(px, py + inset, px, py + size - inset);
+  innerGradient.addColorStop(0, `rgba(255,255,255,${config.innerTop ?? 0.3})`);
+  innerGradient.addColorStop(0.45, `rgba(255,255,255,${config.innerMid ?? 0.09})`);
+  innerGradient.addColorStop(1, `rgba(255,255,255,${config.innerBottom ?? 0.03})`);
+  target.fillStyle = innerGradient;
+  target.fillRect(px + inset, py + inset, innerSize, innerSize);
+  target.fillStyle = `rgba(255,255,255,${config.bandAlpha ?? 0.2})`;
+  target.fillRect(px + inset, py + inset, innerSize, Math.max(3, Math.floor(size * (config.bandScale ?? 0.15))));
+  target.strokeStyle = `rgba(255,255,255,${config.frameAlpha ?? 0.26})`;
+  target.lineWidth = 1.2;
+  target.strokeRect(px + 0.6, py + 0.6, size - 1.2, size - 1.2);
+}
 
-      target.fillStyle = adjustColor(color, 72);
-      target.fillRect(px + inset, py + inset, size - inset * 2, Math.max(3, Math.floor(size * 0.18)));
-      target.fillRect(px + inset, py + inset, Math.max(3, Math.floor(size * 0.18)), size - inset * 2);
+function drawNeoSkin(target, px, py, color, size, config) {
+  const inset = Math.max(3, Math.floor(size * (config.insetScale ?? 0.14)));
+  const innerSize = size - inset * 2;
+  target.fillStyle = `rgba(0, 0, 0, ${config.shadowAlpha ?? 0.28})`;
+  target.fillRect(px + 2, py + 2, size - 2, size - 2);
+  target.fillStyle = adjustColor(color, config.shellDark ?? -46);
+  target.fillRect(px, py, size, size);
+  target.fillStyle = adjustColor(color, config.baseShift ?? 0);
+  target.fillRect(px + inset, py + inset, innerSize, innerSize);
+  target.strokeStyle = adjustColor(color, config.edgeLight ?? 88);
+  target.lineWidth = config.edgeWidth ?? 2;
+  target.strokeRect(px + inset - 0.5, py + inset - 0.5, innerSize + 1, innerSize + 1);
+  target.strokeStyle = `rgba(255,255,255,${config.frameAlpha ?? 0.18})`;
+  target.lineWidth = 1;
+  target.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
+}
 
-      target.fillStyle = adjustColor(color, 20);
-      target.fillRect(px + midInset, py + midInset, size - midInset * 2, size - midInset * 2);
+function drawMatteSkin(target, px, py, color, size, config) {
+  const inset = Math.max(2, Math.floor(size * (config.insetScale ?? 0.08)));
+  const innerSize = size - inset * 2;
+  target.fillStyle = `rgba(1, 5, 7, ${config.shadowAlpha ?? 0.34})`;
+  target.fillRect(px + 1, py + 2, size - 1, size - 1);
+  target.fillStyle = adjustColor(color, config.baseShift ?? -8);
+  target.fillRect(px, py, size, size);
+  target.fillStyle = adjustColor(color, config.innerShift ?? 10);
+  target.fillRect(px + inset, py + inset, innerSize, innerSize);
+  target.strokeStyle = `rgba(255,255,255,${config.frameAlpha ?? 0.12})`;
+  target.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
+}
 
-      target.strokeStyle = "rgba(0, 0, 0, 0.42)";
-      target.lineWidth = 1.25;
-      target.strokeRect(px + 0.6, py + 0.6, size - 1.2, size - 1.2);
-    },
-  },
-  glass: {
-    drawCell(target, x, y, color, size) {
-      const px = x * size;
-      const py = y * size;
-      const inset = Math.max(2, Math.floor(size * 0.1));
-      const innerWidth = size - inset * 2;
+function drawHaloSkin(target, px, py, color, size, config) {
+  const inset = Math.max(3, Math.floor(size * (config.insetScale ?? 0.16)));
+  const innerSize = size - inset * 2;
+  target.fillStyle = `rgba(4, 10, 14, ${config.shadowAlpha ?? 0.3})`;
+  target.fillRect(px + 1, py + 2, size - 1, size - 1);
+  target.fillStyle = adjustColor(color, config.shellDark ?? -52);
+  target.fillRect(px, py, size, size);
+  target.fillStyle = adjustColor(color, config.baseShift ?? -6);
+  target.fillRect(px + inset, py + inset, innerSize, innerSize);
+  target.strokeStyle = adjustColor(color, config.ringLight ?? 110);
+  target.lineWidth = config.ringWidth ?? 1.8;
+  target.strokeRect(px + inset - 0.5, py + inset - 0.5, innerSize + 1, innerSize + 1);
+  target.strokeStyle = `rgba(255,255,255,${config.frameAlpha ?? 0.08})`;
+  target.lineWidth = 1;
+  target.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
+}
 
-      const shellGradient = target.createLinearGradient(px, py, px + size, py + size);
-      shellGradient.addColorStop(0, "rgba(255,255,255,0.34)");
-      shellGradient.addColorStop(0.16, adjustColor(color, 55));
-      shellGradient.addColorStop(0.5, color);
-      shellGradient.addColorStop(1, adjustColor(color, -30));
-
-      target.fillStyle = "rgba(2, 6, 8, 0.4)";
-      target.fillRect(px + 1, py + 2, size - 2, size - 2);
-
-      target.fillStyle = shellGradient;
-      target.fillRect(px, py, size, size);
-
-      const innerGradient = target.createLinearGradient(px, py + inset, px, py + size - inset);
-      innerGradient.addColorStop(0, "rgba(255,255,255,0.3)");
-      innerGradient.addColorStop(0.45, "rgba(255,255,255,0.09)");
-      innerGradient.addColorStop(1, "rgba(255,255,255,0.03)");
-      target.fillStyle = innerGradient;
-      target.fillRect(px + inset, py + inset, innerWidth, innerWidth);
-
-      target.fillStyle = "rgba(255,255,255,0.2)";
-      target.fillRect(px + inset, py + inset, innerWidth, Math.max(3, Math.floor(size * 0.15)));
-
-      target.strokeStyle = "rgba(255,255,255,0.26)";
-      target.lineWidth = 1.2;
-      target.strokeRect(px + 0.6, py + 0.6, size - 1.2, size - 1.2);
-    },
-  },
-  neo: {
-    drawCell(target, x, y, color, size) {
-      const px = x * size;
-      const py = y * size;
-      const inset = Math.max(3, Math.floor(size * 0.14));
-      const innerWidth = size - inset * 2;
-
-      target.fillStyle = "rgba(0, 0, 0, 0.28)";
-      target.fillRect(px + 2, py + 2, size - 2, size - 2);
-
-      target.fillStyle = adjustColor(color, -46);
-      target.fillRect(px, py, size, size);
-
-      target.fillStyle = color;
-      target.fillRect(px + inset, py + inset, innerWidth, innerWidth);
-
-      target.strokeStyle = adjustColor(color, 88);
-      target.lineWidth = 2;
-      target.strokeRect(px + inset - 0.5, py + inset - 0.5, innerWidth + 1, innerWidth + 1);
-
-      target.strokeStyle = "rgba(255,255,255,0.18)";
-      target.lineWidth = 1;
-      target.strokeRect(px + 0.5, py + 0.5, size - 1, size - 1);
-    },
-  },
+const SKIN_RENDERERS = {
+  bevel: drawBevelSkin,
+  arcade: drawArcadeSkin,
+  glass: drawGlassSkin,
+  neo: drawNeoSkin,
+  matte: drawMatteSkin,
+  halo: drawHaloSkin,
 };
+
+const BLOCK_SKIN_DEFINITIONS = [
+  { key: "bevel", label: "Bevel", mode: "bevel", options: {} },
+  { key: "arcade", label: "Arcade", mode: "arcade", options: {} },
+  { key: "glass", label: "Glass", mode: "glass", options: {} },
+  { key: "neo", label: "Neo", mode: "neo", options: {} },
+  { key: "candy", label: "Candy", mode: "bevel", options: { light: 74, dark: -20, glossTop: 0.34, glossMid: 0.12 } },
+  { key: "ember", label: "Ember", mode: "bevel", options: { light: 42, dark: -48, edgeDark: 0.44, frameAlpha: 0.06 } },
+  { key: "frost", label: "Frost", mode: "glass", options: { light: 76, dark: -18, innerTop: 0.4, bandAlpha: 0.28 } },
+  { key: "steel", label: "Steel", mode: "matte", options: { baseShift: -18, innerShift: 4, frameAlpha: 0.18 } },
+  { key: "prism", label: "Prism", mode: "glass", options: { shellAlpha: 0.42, bandAlpha: 0.26, frameAlpha: 0.32 } },
+  { key: "soft", label: "Soft", mode: "matte", options: { baseShift: 6, innerShift: 18, shadowAlpha: 0.22 } },
+  { key: "carbon", label: "Carbon", mode: "neo", options: { shellDark: -68, edgeLight: 58, frameAlpha: 0.12 } },
+  { key: "plasma", label: "Plasma", mode: "halo", options: { ringLight: 128, ringWidth: 2.2, baseShift: 10 } },
+  { key: "sunset", label: "Sunset", mode: "bevel", options: { light: 52, mid: 10, dark: -24, glossTop: 0.24 } },
+  { key: "crystal", label: "Crystal", mode: "glass", options: { shellAlpha: 0.5, innerTop: 0.34, innerMid: 0.14, frameAlpha: 0.36 } },
+  { key: "gridline", label: "Gridline", mode: "neo", options: { insetScale: 0.2, edgeWidth: 1.6, edgeLight: 120 } },
+  { key: "pixel", label: "Pixel", mode: "arcade", options: { insetScale: 0.16, stripScale: 0.14, shellDark: -36, coreShift: 8 } },
+  { key: "aqua", label: "Aqua", mode: "glass", options: { light: 64, dark: -14, bandAlpha: 0.24, shellAlpha: 0.38 } },
+  { key: "velvet", label: "Velvet", mode: "matte", options: { baseShift: -14, innerShift: -2, shadowAlpha: 0.4 } },
+  { key: "shock", label: "Shock", mode: "halo", options: { ringLight: 138, baseShift: 18, ringWidth: 2.4 } },
+  { key: "retro", label: "Retro", mode: "arcade", options: { shellDark: -18, stripLight: 54, coreShift: -8 } },
+  { key: "onyx", label: "Onyx", mode: "neo", options: { shellDark: -82, baseShift: -24, edgeLight: 42, frameAlpha: 0.08 } },
+  { key: "mint", label: "Mint", mode: "bevel", options: { light: 66, dark: -16, glossTop: 0.3, edgeLight: 0.22 } },
+  { key: "laser", label: "Laser", mode: "halo", options: { insetScale: 0.22, ringLight: 150, ringWidth: 1.5, frameAlpha: 0.16 } },
+  { key: "slate", label: "Slate", mode: "matte", options: { baseShift: -26, innerShift: -8, frameAlpha: 0.2 } },
+];
+
+const BLOCK_SKINS = Object.fromEntries(
+  BLOCK_SKIN_DEFINITIONS.map((definition) => [
+    definition.key,
+    {
+      label: definition.label,
+      drawCell(target, x, y, color, size) {
+        SKIN_RENDERERS[definition.mode](
+          target,
+          x * size,
+          y * size,
+          color,
+          size,
+          definition.options,
+        );
+      },
+    },
+  ]),
+);
 
 const SHAPES = {
   I: [
@@ -281,8 +353,7 @@ let events = null;
 let isLeavingLobby = false;
 let isSyncingLobbies = false;
 let currentBlockSkin = getStoredBlockSkin();
-
-const clientProfile = getOrCreateProfile();
+let clientProfile = getOrCreateProfile();
 
 function showScreen(screenName) {
   Object.values(screens).forEach((screen) =>
@@ -371,45 +442,232 @@ function createPieceQueue(randomFn = Math.random) {
   };
 }
 
-function getOrCreateProfile() {
-  try {
-    const existingSession = JSON.parse(
-      sessionStorage.getItem(STORAGE_KEYS.sessionProfile) ?? "null",
-    );
-    if (existingSession?.id && existingSession?.name) {
-      return existingSession;
-    }
-  } catch {}
+function randomPlayerId(prefix = "player") {
+  return typeof crypto?.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+}
 
-  let baseName = `Player ${Math.floor(1000 + Math.random() * 9000)}`;
+function readJsonStorage(storage, key, fallback) {
   try {
-    const storedBase = JSON.parse(
-      localStorage.getItem(STORAGE_KEYS.profileBase) ?? "null",
-    );
-    if (storedBase?.baseName) {
-      baseName = storedBase.baseName;
-    } else {
-      localStorage.setItem(
-        STORAGE_KEYS.profileBase,
-        JSON.stringify({ baseName }),
-      );
-    }
+    const raw = storage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
   } catch {
-    localStorage.setItem(
-      STORAGE_KEYS.profileBase,
-      JSON.stringify({ baseName }),
-    );
+    return fallback;
+  }
+}
+
+function writeJsonStorage(storage, key, value) {
+  try {
+    storage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
+function normalizeAccountName(value) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 18);
+}
+
+function getStoredAccounts() {
+  const accounts = readJsonStorage(localStorage, STORAGE_KEYS.accounts, []);
+  return Array.isArray(accounts) ? accounts : [];
+}
+
+function saveAccounts(accounts) {
+  writeJsonStorage(localStorage, STORAGE_KEYS.accounts, accounts);
+}
+
+function getGuestBaseProfile() {
+  const fallbackName = `Player ${Math.floor(1000 + Math.random() * 9000)}`;
+  const storedBase = readJsonStorage(localStorage, STORAGE_KEYS.profileBase, null);
+  const baseProfile = {
+    baseName: storedBase?.baseName || fallbackName,
+    wins: storedBase?.wins || 0,
+    losses: storedBase?.losses || 0,
+  };
+  writeJsonStorage(localStorage, STORAGE_KEYS.profileBase, baseProfile);
+  return baseProfile;
+}
+
+function buildGuestProfile() {
+  const baseProfile = getGuestBaseProfile();
+  return {
+    id: randomPlayerId("guest"),
+    name: `${baseProfile.baseName} ${Math.floor(10 + Math.random() * 90)}`,
+    guest: true,
+    wins: baseProfile.wins,
+    losses: baseProfile.losses,
+  };
+}
+
+function buildAccountProfile(account) {
+  return {
+    id: account.id,
+    accountId: account.id,
+    name: account.username,
+    guest: false,
+    wins: account.wins || 0,
+    losses: account.losses || 0,
+  };
+}
+
+function persistSessionProfile(profile = clientProfile) {
+  writeJsonStorage(sessionStorage, STORAGE_KEYS.sessionProfile, profile);
+}
+
+function getOrCreateProfile() {
+  const accounts = getStoredAccounts();
+  const currentAccountId = localStorage.getItem(STORAGE_KEYS.currentAccountId);
+  const currentAccount = accounts.find((account) => account.id === currentAccountId);
+  if (currentAccount) {
+    const profile = buildAccountProfile(currentAccount);
+    persistSessionProfile(profile);
+    return profile;
   }
 
-  const profile = {
-    id:
-      typeof crypto?.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `player-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-    name: `${baseName} ${Math.floor(10 + Math.random() * 90)}`,
-  };
-  sessionStorage.setItem(STORAGE_KEYS.sessionProfile, JSON.stringify(profile));
+  const existingSession = readJsonStorage(
+    sessionStorage,
+    STORAGE_KEYS.sessionProfile,
+    null,
+  );
+  if (existingSession?.id && existingSession?.name && existingSession.guest) {
+    return existingSession;
+  }
+
+  const profile = buildGuestProfile();
+  persistSessionProfile(profile);
   return profile;
+}
+
+function getAccountByName(username) {
+  return getStoredAccounts().find(
+    (account) => account.username.toLowerCase() === username.toLowerCase(),
+  );
+}
+
+function updateAccountUi(statusText = "") {
+  accountElements.name.textContent = clientProfile.name;
+  accountElements.status.textContent = statusText || (clientProfile.guest
+    ? "Guest profile active. Create an account to keep a persistent ranked record."
+    : "Signed in. Your wins and losses will keep tracking on this device.");
+  hud.player.textContent = clientProfile.name;
+  hud.wins.textContent = String(clientProfile.wins || 0);
+  hud.losses.textContent = String(clientProfile.losses || 0);
+  if (inputs.accountName) {
+    inputs.accountName.value = clientProfile.guest ? "" : clientProfile.name;
+  }
+  if (inputs.accountPassword) {
+    inputs.accountPassword.value = "";
+  }
+}
+
+function populateSkinPicker() {
+  if (!inputs.blockSkin) {
+    return;
+  }
+
+  inputs.blockSkin.innerHTML = "";
+  BLOCK_SKIN_DEFINITIONS.forEach((skin) => {
+    const option = document.createElement("option");
+    option.value = skin.key;
+    option.textContent = skin.label;
+    inputs.blockSkin.appendChild(option);
+  });
+  inputs.blockSkin.value = currentBlockSkin;
+}
+
+function setClientProfile(profile, statusText) {
+  clientProfile = profile;
+  persistSessionProfile(clientProfile);
+  updateAccountUi(statusText);
+  if (gameState) {
+    updateHud();
+    updateMatchHud();
+  }
+}
+
+function createAccount() {
+  const username = normalizeAccountName(inputs.accountName?.value || "");
+  const password = (inputs.accountPassword?.value || "").trim();
+  if (username.length < 3) {
+    updateAccountUi("Usernames need at least 3 characters.");
+    return;
+  }
+  if (password.length < 4) {
+    updateAccountUi("Passwords need at least 4 characters.");
+    return;
+  }
+  if (getAccountByName(username)) {
+    updateAccountUi("That username already exists on this device. Sign in instead.");
+    return;
+  }
+
+  const accounts = getStoredAccounts();
+  const account = {
+    id: randomPlayerId("account"),
+    username,
+    password,
+    wins: 0,
+    losses: 0,
+    createdAt: Date.now(),
+  };
+  accounts.push(account);
+  saveAccounts(accounts);
+  localStorage.setItem(STORAGE_KEYS.currentAccountId, account.id);
+  setClientProfile(buildAccountProfile(account), "Account created. You are signed in.");
+}
+
+function signInAccount() {
+  const username = normalizeAccountName(inputs.accountName?.value || "");
+  const password = (inputs.accountPassword?.value || "").trim();
+  const account = getAccountByName(username);
+  if (!account || account.password !== password) {
+    updateAccountUi("That username/password combo was not found on this device.");
+    return;
+  }
+
+  localStorage.setItem(STORAGE_KEYS.currentAccountId, account.id);
+  setClientProfile(buildAccountProfile(account), "Signed in successfully.");
+}
+
+function useGuestProfile() {
+  localStorage.removeItem(STORAGE_KEYS.currentAccountId);
+  setClientProfile(buildGuestProfile(), "Guest mode active. Your guest record stays local to this browser.");
+}
+
+function recordMatchResult(result) {
+  if (result !== "win" && result !== "loss") {
+    return;
+  }
+
+  if (result === "win") {
+    clientProfile.wins = (clientProfile.wins || 0) + 1;
+  } else {
+    clientProfile.losses = (clientProfile.losses || 0) + 1;
+  }
+
+  if (clientProfile.accountId) {
+    const accounts = getStoredAccounts();
+    const updatedAccounts = accounts.map((account) =>
+      account.id === clientProfile.accountId
+        ? {
+            ...account,
+            wins: clientProfile.wins,
+            losses: clientProfile.losses,
+          }
+        : account,
+    );
+    saveAccounts(updatedAccounts);
+  } else {
+    const baseProfile = getGuestBaseProfile();
+    writeJsonStorage(localStorage, STORAGE_KEYS.profileBase, {
+      ...baseProfile,
+      wins: clientProfile.wins,
+      losses: clientProfile.losses,
+    });
+  }
+
+  persistSessionProfile(clientProfile);
+  updateAccountUi();
 }
 
 async function apiRequest(path, options = {}) {
@@ -679,6 +937,18 @@ function collides(piece, board, moveX = 0, moveY = 0, matrix = piece.matrix) {
   return false;
 }
 
+function isPieceGrounded(piece = gameState?.active) {
+  return piece ? collides(piece, gameState.board, 0, 1, piece.matrix) : false;
+}
+
+function resetLockDelay() {
+  if (!gameState) {
+    return;
+  }
+  gameState.lockTimer = 0;
+  gameState.lockResets = Math.min(gameState.lockResets + 1, MAX_LOCK_RESETS);
+}
+
 function getGhostY(piece) {
   let ghostY = piece.y;
   while (
@@ -818,7 +1088,10 @@ function resetGame(modeLabel, multiplayerConfig = null) {
     level: 1,
     dropCounter: 0,
     dropInterval: 850,
+    lockTimer: 0,
+    lockResets: 0,
     lastFrame: 0,
+    resultRecorded: false,
     paused: Boolean(multiplayerConfig && !multiplayerConfig.started),
     modeLabel,
     random: randomFn,
@@ -847,6 +1120,8 @@ function spawnPiece() {
     (COLS - gameState.active.matrix[0].length) / 2,
   );
   gameState.active.y = 0;
+  gameState.lockTimer = 0;
+  gameState.lockResets = 0;
   drawNextPiece();
 
   if (collides(gameState.active, gameState.board)) {
@@ -855,9 +1130,12 @@ function spawnPiece() {
 }
 
 function updateHud() {
+  hud.player.textContent = clientProfile.name;
   hud.score.textContent = String(gameState.score);
   hud.lines.textContent = String(gameState.lines);
   hud.level.textContent = String(gameState.level);
+  hud.wins.textContent = String(clientProfile.wins || 0);
+  hud.losses.textContent = String(clientProfile.losses || 0);
 }
 
 function getCurrentLobby() {
@@ -883,6 +1161,40 @@ function findLobbyForPlayer(playerId, preferredLobbyId = null) {
   );
 }
 
+function getRematchReadyCount(lobby) {
+  return lobby?.rematchReadyPlayerIds?.length || 0;
+}
+
+function getWaitingOverlayState(lobby) {
+  const enoughPlayers = lobby.players.length >= 2;
+  const rematchReadyCount = getRematchReadyCount(lobby);
+  const localReady = lobby.rematchReadyPlayerIds?.includes(clientProfile.id);
+
+  if (lobby.status === "finished") {
+    return {
+      eyebrow: "Rematch Lobby",
+      title: localReady ? "Waiting for Rematch" : "Rematch Available",
+      text: localReady
+        ? `Waiting for the other player to confirm rematch (${rematchReadyCount}/${lobby.players.length} ready).`
+        : "Both players must click rematch before the host can start the next duel.",
+      primaryLabel: localReady ? "Waiting..." : "Rematch",
+      action: localReady ? "noop" : "rematch",
+    };
+  }
+
+  return {
+    eyebrow: "Multiplayer Lobby",
+    title: enoughPlayers && gameState.multiplayer.isHost ? "Ready to Start" : "Waiting for Players",
+    text: enoughPlayers
+      ? gameState.multiplayer.isHost
+        ? "Another device joined the room. Start the match whenever you're ready."
+        : "The room is full. Waiting for the host to start the duel."
+      : "Share this server URL with another device and join the same lobby there.",
+    primaryLabel: enoughPlayers && gameState.multiplayer.isHost ? "Start Match" : "Waiting...",
+    action: enoughPlayers && gameState.multiplayer.isHost ? "start-match" : "noop",
+  };
+}
+
 function updateMatchHud() {
   if (!gameState?.multiplayer?.enabled) {
     updateGamePanels();
@@ -906,6 +1218,10 @@ function updateMatchHud() {
       multiplayer.result === "win"
         ? `You outlasted ${opponentName}.`
         : `${opponentName} survived the duel.`;
+  } else if (currentLobby?.status === "finished") {
+    const rematchReadyCount = getRematchReadyCount(currentLobby);
+    matchHud.label.textContent = "Rematch Queue";
+    matchHud.text.textContent = `${rematchReadyCount}/${currentLobby.players.length} player(s) are ready for another duel.`;
   } else if (multiplayer.waitingForStart) {
     matchHud.label.textContent = "Lobby Room";
     matchHud.text.textContent = multiplayer.isHost
@@ -936,12 +1252,18 @@ function showOverlay({ eyebrow, title, text, primaryLabel, action }) {
 }
 
 async function handlePlayerLoss() {
-  if (gameState?.multiplayer?.enabled) {
+  if (!gameState || gameState.resultRecorded) {
+    return;
+  }
+  gameState.resultRecorded = true;
+
+  if (gameState.multiplayer?.enabled) {
     const multiplayer = gameState.multiplayer;
     multiplayer.matchEnded = true;
     multiplayer.result = "loss";
     multiplayer.waitingForStart = false;
     gameState.paused = true;
+    recordMatchResult("loss");
     showOverlay({
       eyebrow: "Match Finished",
       title: "Defeat",
@@ -983,8 +1305,16 @@ function gameLoop(time = 0) {
   if (!gameState.paused) {
     gameState.dropCounter += delta;
     if (gameState.dropCounter >= gameState.dropInterval) {
-      gameState.dropCounter = 0;
       stepDown();
+    }
+    if (isPieceGrounded()) {
+      gameState.lockTimer += delta;
+      if (gameState.lockTimer >= LOCK_DELAY_MS) {
+        placeActivePiece();
+      }
+    } else {
+      gameState.lockTimer = 0;
+      gameState.lockResets = 0;
     }
     drawBoard();
   }
@@ -1035,8 +1365,18 @@ function stepDown() {
     return;
   }
 
+  gameState.dropCounter = 0;
   if (!collides(gameState.active, gameState.board, 0, 1)) {
     gameState.active.y += 1;
+    if (isPieceGrounded()) {
+      gameState.lockTimer = 0;
+    }
+    return;
+  }
+}
+
+function placeActivePiece() {
+  if (!gameState || gameState.paused) {
     return;
   }
 
@@ -1051,7 +1391,7 @@ function hardDrop() {
     gameState.score += 2;
   }
   updateHud();
-  stepDown();
+  placeActivePiece();
 }
 
 function movePiece(direction) {
@@ -1059,7 +1399,11 @@ function movePiece(direction) {
     return;
   }
   if (!collides(gameState.active, gameState.board, direction, 0)) {
+    const groundedBeforeMove = isPieceGrounded();
     gameState.active.x += direction;
+    if (groundedBeforeMove && gameState.lockResets < MAX_LOCK_RESETS) {
+      resetLockDelay();
+    }
     drawBoard();
   }
 }
@@ -1072,8 +1416,12 @@ function rotatePiece() {
   const offsets = [0, -1, 1, -2, 2];
   for (const offset of offsets) {
     if (!collides(gameState.active, gameState.board, offset, 0, rotated)) {
+      const groundedBeforeRotate = isPieceGrounded();
       gameState.active.matrix = rotated;
       gameState.active.x += offset;
+      if (groundedBeforeRotate && gameState.lockResets < MAX_LOCK_RESETS) {
+        resetLockDelay();
+      }
       drawBoard();
       return;
     }
@@ -1087,10 +1435,9 @@ function softDrop() {
   if (!collides(gameState.active, gameState.board, 0, 1)) {
     gameState.active.y += 1;
     gameState.score += 1;
+    gameState.lockTimer = 0;
     updateHud();
     drawBoard();
-  } else {
-    stepDown();
   }
 }
 
@@ -1208,19 +1555,8 @@ function enterMultiplayerRoom(lobby) {
     hostId: lobby.hostId,
   });
 
-  const enoughPlayers = lobby.players.length >= 2;
   if (gameState.multiplayer.waitingForStart) {
-    showOverlay({
-      eyebrow: "Multiplayer Lobby",
-      title: enoughPlayers && gameState.multiplayer.isHost ? "Ready to Start" : "Waiting for Players",
-      text: enoughPlayers
-        ? gameState.multiplayer.isHost
-          ? "Another device joined the room. Start the match whenever you're ready."
-          : "The room is full. Waiting for the host to start the duel."
-        : "Share this server URL with another device and join the same lobby there.",
-      primaryLabel: gameState.multiplayer.isHost ? "Start Match" : "Waiting...",
-      action: gameState.multiplayer.isHost ? "start-match" : "noop",
-    });
+    showOverlay(getWaitingOverlayState(lobby));
   } else {
     hideOverlay();
     gameState.paused = false;
@@ -1262,6 +1598,9 @@ function applyMatchStart() {
   gameState.multiplayer.waitingForStart = false;
   gameState.multiplayer.matchEnded = false;
   gameState.multiplayer.result = null;
+  gameState.multiplayer.pendingGarbage = 0;
+  gameState.multiplayer.opponentSnapshot = null;
+  gameState.resultRecorded = false;
   gameState.paused = false;
   buttons.pause.textContent = "Live Match";
   hideOverlay();
@@ -1282,7 +1621,16 @@ async function requestRematch() {
       }),
     });
     await refreshLobbies();
-    enterMultiplayerRoom(payload.lobby);
+    if (payload.lobby.status === "waiting") {
+      enterMultiplayerRoom(payload.lobby);
+      return;
+    }
+
+    gameState.multiplayer.waitingForStart = true;
+    gameState.multiplayer.matchEnded = false;
+    gameState.paused = true;
+    updateMatchHud();
+    showOverlay(getWaitingOverlayState(payload.lobby));
   } catch (error) {
     showOverlay({
       eyebrow: "Rematch Failed",
@@ -1314,7 +1662,9 @@ function handleRemoteLoss(playerId) {
 
   gameState.multiplayer.matchEnded = true;
   gameState.multiplayer.result = "win";
+  gameState.resultRecorded = true;
   gameState.paused = true;
+  recordMatchResult("win");
   showOverlay({
     eyebrow: "Match Finished",
     title: "Victory",
@@ -1344,18 +1694,7 @@ function syncCurrentLobbyView() {
   }
 
   if (gameState.multiplayer.waitingForStart) {
-    const enoughPlayers = lobby.players.length >= 2;
-    showOverlay({
-      eyebrow: "Multiplayer Lobby",
-      title: enoughPlayers && gameState.multiplayer.isHost ? "Ready to Start" : "Waiting for Players",
-      text: enoughPlayers
-        ? gameState.multiplayer.isHost
-          ? "Another device has joined. Start the duel when you want."
-          : "The room is full. Waiting for the host to start."
-        : "This room needs one more player connected to the same server.",
-      primaryLabel: gameState.multiplayer.isHost ? "Start Match" : "Waiting...",
-      action: gameState.multiplayer.isHost ? "start-match" : "noop",
-    });
+    showOverlay(getWaitingOverlayState(lobby));
   }
 
   updateMatchHud();
@@ -1443,12 +1782,23 @@ function handleServerEvent(message) {
   }
 }
 
+populateSkinPicker();
+updateAccountUi();
+
 if (inputs.blockSkin) {
-  inputs.blockSkin.value = currentBlockSkin;
   inputs.blockSkin.addEventListener("change", (event) => {
     setBlockSkin(event.target.value);
   });
 }
+
+buttons.createAccount.addEventListener("click", createAccount);
+buttons.signIn.addEventListener("click", signInAccount);
+buttons.signOut.addEventListener("click", useGuestProfile);
+inputs.accountPassword?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    signInAccount();
+  }
+});
 
 buttons.singleplayer.addEventListener("click", startSingleplayer);
 buttons.multiplayer.addEventListener("click", async () => {
